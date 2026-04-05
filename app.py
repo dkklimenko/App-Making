@@ -17,6 +17,10 @@ rho_hf = st.sidebar.number_input("Correlation", min_value=-1.0, max_value=1.0, v
 
 r_free = st.sidebar.number_input("Risk-Free Rate (%)", value=2.0) / 100
 
+st.sidebar.header("Sustainability Inputs")
+esg1 = st.sidebar.slider("Asset 1 ESG Score", min_value=0, max_value=100, value=75)
+esg2 = st.sidebar.slider("Asset 2 ESG Score", min_value=0, max_value=100, value=55)
+
 st.sidebar.header("Your Preferences")
 gamma = st.sidebar.slider("Risk Aversion (γ)", min_value=0.1, max_value=10.0, value=5.0, step=0.1)
 
@@ -47,6 +51,9 @@ w2_tangency = 1 - w1_tangency
 ret_tangency = portfolio_ret(w1_tangency, r_h, r_f)
 sd_tangency = portfolio_sd(w1_tangency, sd_h, sd_f, rho_hf)
 
+# ESG score of tangency portfolio
+esg_tangency = w1_tangency * esg1 + w2_tangency * esg2
+
 # Find optimal portfolio
 if sd_tangency > 0:
     w_tangency_optimal = (ret_tangency - r_free) / (gamma * sd_tangency**2)
@@ -61,6 +68,11 @@ w_rf_optimal = 1 - w_tangency_optimal
 # Optimal portfolio characteristics
 ret_optimal = r_free + w_tangency_optimal * (ret_tangency - r_free)
 sd_optimal = abs(w_tangency_optimal) * sd_tangency
+
+# ESG score of complete optimal portfolio
+# Risk-free asset assumed to have ESG score of 100
+esg_rf = 100
+esg_optimal = w_rf_optimal * esg_rf + w1_optimal * esg1 + w2_optimal * esg2
 
 # Display results
 tab1, tab2 = st.tabs(["📊 Results", "📈 Graph"])
@@ -77,6 +89,11 @@ with tab1:
     col1, col2 = st.columns(2)
     col1.metric("Expected Return", f"{ret_optimal*100:.2f}%")
     col2.metric("Risk (Std Dev)", f"{sd_optimal*100:.2f}%")
+
+st.write("")
+col1, col2 = st.columns(2)
+col1.metric("Tangency Portfolio ESG Score", f"{esg_tangency:.2f}")
+col2.metric("Optimal Portfolio ESG Score", f"{esg_optimal:.2f}")
 
 with tab2:
     st.header("Portfolio Visualization")
