@@ -10,7 +10,7 @@ from itertools import combinations
 # --------------------------------------------------
 st.set_page_config(
     page_title="GreenVest Portfolio Optimizer",
-    page_icon="🌿",
+    page_icon="🫃🏾",
     layout="wide"
 )
 
@@ -63,7 +63,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="main-title">🌿 GreenVest Portfolio Optimizer</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">👔 GreenVest Portfolio Optimizer</div>', unsafe_allow_html=True)
 st.markdown(
     '<div class="subtitle">Find sustainable portfolio recommendations based on risk tolerance and ESG preferences.</div>',
     unsafe_allow_html=True
