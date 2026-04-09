@@ -91,35 +91,42 @@ def load_data():
         "ESG Score": "esg_score",
         "Name": "name"
     })
-
     esg["ticker"] = esg["ticker"].astype(str).str.strip()
 
-    # Build a safe name map
+    # Create a safe ticker -> name mapping
     if "name" in prices.columns:
         prices["name"] = prices["name"].astype(str).str.strip()
+        price_name_map = prices[["ticker", "name"]].dropna().drop_duplicates()
     else:
-        prices["name"] = np.nan
+        price_name_map = pd.DataFrame(columns=["ticker", "name"])
 
     if "name" in esg.columns:
         esg["name"] = esg["name"].astype(str).str.strip()
+        esg_name_map = esg[["ticker", "name"]].dropna().drop_duplicates()
     else:
-        esg["name"] = np.nan
+        esg_name_map = pd.DataFrame(columns=["ticker", "name"])
 
-    price_name_map = prices[["ticker", "name"]].drop_duplicates()
-    esg_name_map = esg[["ticker", "name"]].drop_duplicates()
+    name_map = pd.concat([price_name_map, esg_name_map], ignore_index=True)
+    if not name_map.empty:
+        name_map = name_map.dropna(subset=["ticker"]).drop_duplicates(subset=["ticker"], keep="first")
+    else:
+        name_map = pd.DataFrame({"ticker": prices["ticker"].drop_duplicates()})
+        name_map["name"] = name_map["ticker"]
 
-    name_map = pd.merge(price_name_map, esg_name_map, on="ticker", how="outer", suffixes=("_price", "_esg"))
-    name_map["name"] = name_map["name_price"].combine_first(name_map["name_esg"])
+    # Ensure every ticker has a name fallback
+    all_tickers = pd.DataFrame({"ticker": pd.concat([prices["ticker"], esg["ticker"]]).drop_duplicates()})
+    name_map = all_tickers.merge(name_map, on="ticker", how="left")
     name_map["name"] = name_map["name"].fillna(name_map["ticker"])
-    name_map = name_map[["ticker", "name"]].drop_duplicates()
 
-    # Apply clean names back
+    # Add clean names back to prices
     prices = prices.drop(columns=["name"], errors="ignore").merge(name_map, on="ticker", how="left")
+
+    # Add clean names back to ESG
     esg = esg.drop(columns=["name"], errors="ignore").merge(name_map, on="ticker", how="left")
 
     esg = esg.dropna(subset=["ticker", "environmental", "social", "governance", "esg_score"])
 
-    # Mean ESG score used for rating scale
+    # Convert total ESG score to average score for rating scale
     esg["esg_mean_score"] = esg["esg_score"] / 3
 
     return prices, esg, name_map
@@ -163,6 +170,12 @@ def portfolio_utility(ret, risk, esg_score, gamma, lambda_esg):
 
 def build_label(df):
     return df["name"].fillna(df["ticker"]) + " (" + df["ticker"] + ")"
+
+def get_asset_name(ticker):
+    match = name_map.loc[name_map["ticker"] == ticker, "name"]
+    if len(match) > 0:
+        return match.iloc[0]
+    return ticker
 
 def get_asset_stats(prices_df, ticker1, ticker2):
     df1 = prices_df[prices_df["ticker"] == ticker1][["date", "price"]].sort_values("date").rename(columns={"price": "price_1"})
@@ -315,8 +328,6 @@ if mode == "Simple Recommendation":
     asset_summary["risk"] = asset_summary["std_monthly"] * np.sqrt(12)
 
     universe = esg.merge(asset_summary[["ticker", "expected_return", "risk"]], on="ticker", how="inner")
-    universe = universe.merge(name_map, on="ticker", how="left")
-    universe["name"] = universe["name"].fillna(universe["ticker"])
 
     universe["selection_score"] = (
         0.55 * (universe["preference_score"] / 10) +
@@ -395,8 +406,8 @@ else:
 # --------------------------------------------------
 # COMMON OUTPUT
 # --------------------------------------------------
-name1 = name_map.loc[name_map["ticker"] == ticker1, "name"].iloc[0] if not name_map.loc[name_map["ticker"] == ticker1].empty else ticker1
-name2 = name_map.loc[name_map["ticker"] == ticker2, "name"].iloc[0] if not name_map.loc[name_map["ticker"] == ticker2].empty else ticker2
+name1 = get_asset_name(ticker1)
+name2 = get_asset_name(ticker2)
 
 esg_row_1 = esg[esg["ticker"] == ticker1].iloc[0]
 esg_row_2 = esg[esg["ticker"] == ticker2].iloc[0]
