@@ -65,7 +65,7 @@ st.markdown("""
 
 st.markdown('<div class="main-title">🌿 GreenVest Portfolio Optimizer</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="subtitle">Find sustainable portfolio recommendations based on risk tolerance and ESG preference.</div>',
+    '<div class="subtitle">Find sustainable portfolio recommendations based on risk tolerance and ESG preferences.</div>',
     unsafe_allow_html=True
 )
 
@@ -77,15 +77,12 @@ def load_data():
     prices = pd.read_csv("SP500_Prices.csv")
     esg = pd.read_csv("ESG Values.csv")
 
-    # Standardize column names
     prices.columns = [c.strip() for c in prices.columns]
     esg.columns = [c.strip() for c in esg.columns]
 
-    # Prices file expected columns: date, ticker, price, optional name
     prices["date"] = pd.to_datetime(prices["date"])
     prices["ticker"] = prices["ticker"].astype(str).str.strip()
 
-    # ESG file standardization
     esg = esg.rename(columns={
         "Ticker": "ticker",
         "Environmental": "environmental",
@@ -97,7 +94,7 @@ def load_data():
 
     esg["ticker"] = esg["ticker"].astype(str).str.strip()
 
-    # If prices has name column, keep it. Otherwise merge from ESG if available.
+    # If prices does not have names, fill from ESG or ticker
     if "name" in prices.columns:
         prices["name"] = prices["name"].astype(str).str.strip()
     else:
@@ -111,8 +108,10 @@ def load_data():
         esg = esg.merge(name_map, on="ticker", how="left")
         esg["name"] = esg["name"].fillna(esg["ticker"])
 
-    # Drop missing required fields
     esg = esg.dropna(subset=["ticker", "environmental", "social", "governance", "esg_score"])
+
+    # Mean ESG score used for AAA/AA/A... rating scale
+    esg["esg_mean_score"] = esg["esg_score"] / 3
 
     return prices, esg
 
@@ -152,6 +151,9 @@ def portfolio_esg(w1, esg1, esg2):
 
 def portfolio_utility(ret, risk, esg_score, gamma, lambda_esg):
     return ret + lambda_esg * (esg_score / 10) - 0.5 * gamma * (risk ** 2)
+
+def build_label(df):
+    return df["name"].fillna(df["ticker"]) + " (" + df["ticker"] + ")"
 
 def get_asset_stats(prices_df, ticker1, ticker2):
     df1 = prices_df[prices_df["ticker"] == ticker1][["date", "price"]].sort_values("date").rename(columns={"price": "price_1"})
@@ -220,8 +222,29 @@ def optimize_two_asset_portfolio(r1, r2, sd1, sd2, rho, esg1, esg2, gamma, lambd
         "utility_opt": utilities[best_idx]
     }
 
-def build_label(df):
-    return (df["name"].fillna(df["ticker"]) + " (" + df["ticker"] + ")")
+def describe_investment_type(risk, esg_mean, sharpe):
+    if risk < 0.18:
+        risk_text = "relatively defensive"
+    elif risk < 0.28:
+        risk_text = "balanced"
+    else:
+        risk_text = "growth-oriented and higher-risk"
+
+    if esg_mean >= 7.1:
+        esg_text = "strong sustainability quality"
+    elif esg_mean >= 4.3:
+        esg_text = "moderate sustainability quality"
+    else:
+        esg_text = "weaker sustainability quality"
+
+    if sharpe >= 0.8:
+        efficiency_text = "efficient on a risk-adjusted basis"
+    elif sharpe >= 0.3:
+        efficiency_text = "reasonable on a risk-adjusted basis"
+    else:
+        efficiency_text = "less efficient on a risk-adjusted basis"
+
+    return f"This portfolio is a {risk_text} investment with {esg_text}, and it appears {efficiency_text}."
 
 # --------------------------------------------------
 # SIDEBAR INPUTS
@@ -241,7 +264,6 @@ esg_focus = st.sidebar.selectbox(
 gamma = st.sidebar.slider("Risk Tolerance / Aversion (γ)", 0.5, 10.0, 5.0, 0.5)
 r_free = st.sidebar.number_input("Risk-Free Rate (%)", min_value=0.0, max_value=15.0, value=2.0, step=0.1) / 100
 
-# Convert ESG focus into weights
 if esg_focus == "Balanced ESG":
     env_weight, soc_weight, gov_weight = 1/3, 1/3, 1/3
     lambda_esg = 0.6
@@ -267,25 +289,18 @@ esg["preference_score"] = (
 if mode == "Simple Recommendation":
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.subheader("Simple Recommendation")
-
     st.write(
-        "This mode automatically identifies two strong candidate stocks based on your ESG preference, "
-        "then builds the optimized 2-asset portfolio."
+        "This mode identifies promising stocks based on your ESG focus and historical performance, "
+        "then builds the optimized two-asset portfolio."
     )
 
-    # Use average return from price history for every ticker
-    returns_table = (
-        prices.sort_values(["ticker", "date"])
-        .groupby("ticker")
-        .apply(lambda x: x.assign(ret=x["price"].pct_change()))
-        .reset_index(drop=True)
-    )
+    # SAFE return calculation
+    returns_table = prices.copy().sort_values(["ticker", "date"])
+    returns_table["ret"] = returns_table.groupby("ticker")["price"].pct_change()
 
     asset_summary = (
-        returns_table.groupby("ticker")["ret"]
-        .agg(["mean", "std"])
-        .reset_index()
-        .rename(columns={"mean": "avg_ret_monthly", "std": "std_monthly"})
+        returns_table.groupby("ticker", as_index=False)["ret"]
+        .agg(avg_ret_monthly="mean", std_monthly="std")
     )
 
     asset_summary["expected_return"] = asset_summary["avg_ret_monthly"] * 12
@@ -295,16 +310,13 @@ if mode == "Simple Recommendation":
     universe = universe.merge(prices[["ticker", "name"]].drop_duplicates(), on="ticker", how="left")
     universe["name"] = universe["name"].fillna(universe["ticker"])
 
-    # Asset ranking score: combine ESG and return, penalize risk
     universe["selection_score"] = (
         0.55 * (universe["preference_score"] / 10) +
         0.30 * universe["expected_return"] -
         0.15 * universe["risk"]
     )
 
-    universe = universe.sort_values("selection_score", ascending=False).reset_index(drop=True)
-
-    top_assets = universe.head(12).copy()
+    top_assets = universe.sort_values("selection_score", ascending=False).head(15).copy()
 
     best_pair = None
     best_pair_score = -np.inf
@@ -325,9 +337,8 @@ if mode == "Simple Recommendation":
             gamma, lambda_esg
         )
 
-        pair_score = result["utility_opt"]
-        if pair_score > best_pair_score:
-            best_pair_score = pair_score
+        if result["utility_opt"] > best_pair_score:
+            best_pair_score = result["utility_opt"]
             best_pair = (t1, t2, stats, result)
 
     if best_pair is None:
@@ -346,8 +357,9 @@ else:
     search_df = prices[["ticker", "name"]].drop_duplicates().copy()
     search_df["label"] = build_label(search_df)
 
-    label1 = st.selectbox("Select Asset 1", sorted(search_df["label"].tolist()))
-    label2 = st.selectbox("Select Asset 2", sorted(search_df["label"].tolist()), index=1)
+    labels = sorted(search_df["label"].tolist())
+    label1 = st.selectbox("Select Asset 1", labels)
+    label2 = st.selectbox("Select Asset 2", labels, index=1 if len(labels) > 1 else 0)
 
     ticker1 = search_df.loc[search_df["label"] == label1, "ticker"].iloc[0]
     ticker2 = search_df.loc[search_df["label"] == label2, "ticker"].iloc[0]
@@ -357,7 +369,6 @@ else:
         st.stop()
 
     stats = get_asset_stats(prices, ticker1, ticker2)
-
     if stats is None:
         st.error("Not enough overlapping data to compare these two assets.")
         st.stop()
@@ -374,7 +385,7 @@ else:
     )
 
 # --------------------------------------------------
-# COMMON OUTPUT SECTION
+# COMMON OUTPUT
 # --------------------------------------------------
 name1 = prices.loc[prices["ticker"] == ticker1, "name"].dropna().iloc[0] if not prices.loc[prices["ticker"] == ticker1, "name"].dropna().empty else ticker1
 name2 = prices.loc[prices["ticker"] == ticker2, "name"].dropna().iloc[0] if not prices.loc[prices["ticker"] == ticker2, "name"].dropna().empty else ticker2
@@ -382,28 +393,31 @@ name2 = prices.loc[prices["ticker"] == ticker2, "name"].dropna().iloc[0] if not 
 esg_row_1 = esg[esg["ticker"] == ticker1].iloc[0]
 esg_row_2 = esg[esg["ticker"] == ticker2].iloc[0]
 
-rating1, level1 = esg_rating(float(esg_row_1["esg_score"]))
-rating2, level2 = esg_rating(float(esg_row_2["esg_score"]))
-portfolio_rating, portfolio_level = esg_rating(float(result["esg_opt"]))
+rating1, level1 = esg_rating(float(esg_row_1["esg_mean_score"]))
+rating2, level2 = esg_rating(float(esg_row_2["esg_mean_score"]))
+
+portfolio_esg_mean = result["esg_opt"]
+portfolio_rating, portfolio_level = esg_rating(float(portfolio_esg_mean))
 
 if result["risk_opt"] > 0:
     sharpe_ratio = (result["ret_opt"] - r_free) / result["risk_opt"]
 else:
     sharpe_ratio = 0
 
+investment_description = describe_investment_type(result["risk_opt"], portfolio_esg_mean, sharpe_ratio)
+
 summary_text = (
     f"The optimized portfolio allocates {result['w1']*100:.2f}% to {name1} and "
     f"{result['w2']*100:.2f}% to {name2}. "
-    f"It offers an expected return of {result['ret_opt']*100:.2f}%, "
-    f"risk of {result['risk_opt']*100:.2f}%, a Sharpe ratio of {sharpe_ratio:.3f}, "
-    f"and a portfolio ESG rating of {portfolio_rating} ({portfolio_level})."
+    f"It has an expected annual return of {result['ret_opt']*100:.2f}% and annual risk of {result['risk_opt']*100:.2f}%. "
+    f"Based on the average ESG score scale, the portfolio receives a rating of {portfolio_rating} ({portfolio_level})."
 )
 
-tab1, tab2, tab3 = st.tabs(["📊 Portfolio Results", "📈 Visualisation", "🏢 Asset ESG Overview"])
+tab1, tab2, tab3 = st.tabs(["📊 Portfolio Results", "📈 Visualisation", "🏢 ESG Overview"])
 
 with tab1:
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.subheader("Recommended Portfolio")
+    st.subheader("Portfolio Recommendation")
     st.info(summary_text)
 
     col1, col2, col3, col4 = st.columns(4)
@@ -412,10 +426,13 @@ with tab1:
     col3.metric("Sharpe Ratio", f"{sharpe_ratio:.3f}")
     col4.metric("Portfolio ESG Rating", f"{portfolio_rating} ({portfolio_level})")
 
+    st.write("**Interpretation**")
+    st.write(investment_description)
+
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.subheader("Optimized Weights")
+    st.subheader("Optimized Portfolio Composition")
 
     weights_df = pd.DataFrame({
         "Asset": [name1, name2],
@@ -423,21 +440,34 @@ with tab1:
         "Weight (%)": [result["w1"] * 100, result["w2"] * 100],
         "Expected Return (%)": [stats["r1"] * 100, stats["r2"] * 100],
         "Risk (%)": [stats["sd1"] * 100, stats["sd2"] * 100],
-        "ESG Score": [esg_row_1["esg_score"], esg_row_2["esg_score"]],
+        "Average ESG Score": [esg_row_1["esg_mean_score"], esg_row_2["esg_mean_score"]],
         "ESG Rating": [rating1, rating2]
     })
     st.dataframe(weights_df, use_container_width=True)
+
+    st.write(
+        "This table shows how much of the final portfolio is allocated to each stock, "
+        "together with each stock’s historical return, risk, and sustainability rating."
+    )
+
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.subheader("Asset Statistics")
+    st.subheader("What the Asset Statistics Mean")
 
-    stat_df = pd.DataFrame({
-        "Metric": ["Expected Return", "Standard Deviation", "Correlation"],
-        name1: [f"{stats['r1']*100:.2f}%", f"{stats['sd1']*100:.2f}%", "-"],
-        name2: [f"{stats['r2']*100:.2f}%", f"{stats['sd2']*100:.2f}%", f"{stats['rho']:.3f}"]
-    })
-    st.dataframe(stat_df, use_container_width=True)
+    st.write(
+        f"**{name1}** has an estimated annual return of **{stats['r1']*100:.2f}%** and annual volatility of **{stats['sd1']*100:.2f}%**. "
+        f"Its ESG profile translates into a **{rating1} ({level1})** rating."
+    )
+    st.write(
+        f"**{name2}** has an estimated annual return of **{stats['r2']*100:.2f}%** and annual volatility of **{stats['sd2']*100:.2f}%**. "
+        f"Its ESG profile translates into a **{rating2} ({level2})** rating."
+    )
+    st.write(
+        f"The correlation between the two assets is **{stats['rho']:.3f}**, which measures how similarly they move over time. "
+        f"Lower correlation generally means better diversification benefits."
+    )
+
     st.markdown("</div>", unsafe_allow_html=True)
 
 with tab2:
@@ -456,19 +486,9 @@ with tab2:
         label="Portfolio Frontier"
     )
 
-    ax.scatter(
-        stats["sd1"], stats["r1"],
-        color="#81c784", s=130, label=name1, zorder=5
-    )
-    ax.scatter(
-        stats["sd2"], stats["r2"],
-        color="#388e3c", s=130, label=name2, zorder=5
-    )
-    ax.scatter(
-        result["risk_opt"], result["ret_opt"],
-        color="#1b5e20", s=220, marker="D",
-        label="Optimal Portfolio", zorder=6
-    )
+    ax.scatter(stats["sd1"], stats["r1"], color="#81c784", s=130, label=name1, zorder=5)
+    ax.scatter(stats["sd2"], stats["r2"], color="#388e3c", s=130, label=name2, zorder=5)
+    ax.scatter(result["risk_opt"], result["ret_opt"], color="#1b5e20", s=220, marker="D", label="Optimal Portfolio", zorder=6)
 
     ax.set_title("Risk-Return Frontier", fontsize=14, color="#1b5e20", fontweight="bold")
     ax.set_xlabel("Risk (Standard Deviation)")
@@ -479,11 +499,17 @@ with tab2:
     ax.legend()
 
     st.pyplot(fig)
+
+    st.write(
+        "The frontier shows all possible portfolios formed by combining the two selected stocks. "
+        "The dark green diamond marks the portfolio with the highest utility given your risk tolerance and ESG preference."
+    )
+
     st.markdown("</div>", unsafe_allow_html=True)
 
 with tab3:
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.subheader("Asset ESG Overview")
+    st.subheader("ESG Overview")
 
     esg_display = pd.DataFrame({
         "Asset": [name1, name2],
@@ -492,12 +518,22 @@ with tab3:
         "Social": [esg_row_1["social"], esg_row_2["social"]],
         "Governance": [esg_row_1["governance"], esg_row_2["governance"]],
         "Total ESG Score": [esg_row_1["esg_score"], esg_row_2["esg_score"]],
+        "Average ESG Score": [esg_row_1["esg_mean_score"], esg_row_2["esg_mean_score"]],
         "ESG Rating": [rating1, rating2],
         "Category": [level1, level2]
     })
     st.dataframe(esg_display, use_container_width=True)
 
-    st.write("**ESG rating scale used:**")
-    st.write("AAA = 8.6–10.0, AA = 7.1–8.5, A = 5.7–7.0, BBB = 4.3–5.6, BB = 2.9–4.2, B = 1.4–2.8, CCC = 0.0–1.3")
+    st.write("**How to read the rating scale**")
+    st.write(
+        "We first convert the total ESG score into an average score by dividing by 3. "
+        "That average score is then mapped to the sustainability scale: "
+        "AAA = 8.6–10.0, AA = 7.1–8.5, A = 5.7–7.0, BBB = 4.3–5.6, BB = 2.9–4.2, B = 1.4–2.8, CCC = 0.0–1.3."
+    )
+
+    st.write(
+        f"Based on your chosen ESG focus, **{name1}** and **{name2}** were evaluated using a preference-weighted ESG score. "
+        f"The final portfolio itself scores **{portfolio_esg_mean:.2f}**, corresponding to **{portfolio_rating} ({portfolio_level})**."
+    )
 
     st.markdown("</div>", unsafe_allow_html=True)
