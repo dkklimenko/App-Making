@@ -93,7 +93,6 @@ def load_data():
     })
     esg["ticker"] = esg["ticker"].astype(str).str.strip()
 
-    # Create a safe ticker -> name mapping
     if "name" in prices.columns:
         prices["name"] = prices["name"].astype(str).str.strip()
         price_name_map = prices[["ticker", "name"]].dropna().drop_duplicates()
@@ -113,20 +112,14 @@ def load_data():
         name_map = pd.DataFrame({"ticker": prices["ticker"].drop_duplicates()})
         name_map["name"] = name_map["ticker"]
 
-    # Ensure every ticker has a name fallback
     all_tickers = pd.DataFrame({"ticker": pd.concat([prices["ticker"], esg["ticker"]]).drop_duplicates()})
     name_map = all_tickers.merge(name_map, on="ticker", how="left")
     name_map["name"] = name_map["name"].fillna(name_map["ticker"])
 
-    # Add clean names back to prices
     prices = prices.drop(columns=["name"], errors="ignore").merge(name_map, on="ticker", how="left")
-
-    # Add clean names back to ESG
     esg = esg.drop(columns=["name"], errors="ignore").merge(name_map, on="ticker", how="left")
 
     esg = esg.dropna(subset=["ticker", "environmental", "social", "governance", "esg_score"])
-
-    # Convert total ESG score to average score for rating scale
     esg["esg_mean_score"] = esg["esg_score"] / 3
 
     return prices, esg, name_map
@@ -173,13 +166,56 @@ def build_label(df):
 
 def get_asset_name(ticker):
     match = name_map.loc[name_map["ticker"] == ticker, "name"]
-    if len(match) > 0:
-        return match.iloc[0]
-    return ticker
+    return match.iloc[0] if len(match) else ticker
+
+def compute_cagr(price_series, date_series):
+    if len(price_series) < 2:
+        return np.nan
+    start_price = price_series.iloc[0]
+    end_price = price_series.iloc[-1]
+    start_date = date_series.iloc[0]
+    end_date = date_series.iloc[-1]
+
+    if start_price <= 0 or end_price <= 0 or end_date <= start_date:
+        return np.nan
+
+    years = (end_date - start_date).days / 365.25
+    if years <= 0:
+        return np.nan
+
+    return (end_price / start_price) ** (1 / years) - 1
+
+def get_single_asset_summary(prices_df, ticker):
+    df = prices_df[prices_df["ticker"] == ticker][["date", "price"]].sort_values("date").copy()
+    if len(df) < 12:
+        return None
+
+    df["ret"] = df["price"].pct_change()
+    df = df.dropna()
+
+    if len(df) < 12:
+        return None
+
+    cagr = compute_cagr(
+        prices_df[prices_df["ticker"] == ticker].sort_values("date")["price"].reset_index(drop=True),
+        prices_df[prices_df["ticker"] == ticker].sort_values("date")["date"].reset_index(drop=True)
+    )
+    risk = df["ret"].std() * np.sqrt(12)
+
+    return {"expected_return": cagr, "risk": risk}
 
 def get_asset_stats(prices_df, ticker1, ticker2):
-    df1 = prices_df[prices_df["ticker"] == ticker1][["date", "price"]].sort_values("date").rename(columns={"price": "price_1"})
-    df2 = prices_df[prices_df["ticker"] == ticker2][["date", "price"]].sort_values("date").rename(columns={"price": "price_2"})
+    raw1 = prices_df[prices_df["ticker"] == ticker1][["date", "price"]].sort_values("date").copy()
+    raw2 = prices_df[prices_df["ticker"] == ticker2][["date", "price"]].sort_values("date").copy()
+
+    if len(raw1) < 12 or len(raw2) < 12:
+        return None
+
+    cagr1 = compute_cagr(raw1["price"].reset_index(drop=True), raw1["date"].reset_index(drop=True))
+    cagr2 = compute_cagr(raw2["price"].reset_index(drop=True), raw2["date"].reset_index(drop=True))
+
+    df1 = raw1.rename(columns={"price": "price_1"})
+    df2 = raw2.rename(columns={"price": "price_2"})
 
     merged = pd.merge(df1, df2, on="date", how="inner")
     merged["ret_1"] = merged["price_1"].pct_change()
@@ -189,16 +225,14 @@ def get_asset_stats(prices_df, ticker1, ticker2):
     if len(merged) < 12:
         return None
 
-    r1 = merged["ret_1"].mean() * 12
-    r2 = merged["ret_2"].mean() * 12
     sd1 = merged["ret_1"].std() * np.sqrt(12)
     sd2 = merged["ret_2"].std() * np.sqrt(12)
     rho = merged["ret_1"].corr(merged["ret_2"])
 
     return {
         "merged": merged,
-        "r1": r1,
-        "r2": r2,
+        "r1": cagr1,
+        "r2": cagr2,
         "sd1": sd1,
         "sd2": sd2,
         "rho": rho
@@ -316,18 +350,19 @@ if mode == "Simple Recommendation":
         "then builds the optimized two-asset portfolio."
     )
 
-    returns_table = prices.copy().sort_values(["ticker", "date"])
-    returns_table["ret"] = returns_table.groupby("ticker")["price"].pct_change()
+    summaries = []
+    for ticker in prices["ticker"].drop_duplicates():
+        s = get_single_asset_summary(prices, ticker)
+        if s is not None and pd.notna(s["expected_return"]) and pd.notna(s["risk"]):
+            summaries.append({
+                "ticker": ticker,
+                "expected_return": s["expected_return"],
+                "risk": s["risk"]
+            })
 
-    asset_summary = (
-        returns_table.groupby("ticker", as_index=False)["ret"]
-        .agg(avg_ret_monthly="mean", std_monthly="std")
-    )
+    asset_summary = pd.DataFrame(summaries)
 
-    asset_summary["expected_return"] = asset_summary["avg_ret_monthly"] * 12
-    asset_summary["risk"] = asset_summary["std_monthly"] * np.sqrt(12)
-
-    universe = esg.merge(asset_summary[["ticker", "expected_return", "risk"]], on="ticker", how="inner")
+    universe = esg.merge(asset_summary, on="ticker", how="inner")
 
     universe["selection_score"] = (
         0.55 * (universe["preference_score"] / 10) +
@@ -465,7 +500,7 @@ with tab1:
 
     st.write(
         "This table shows how much of the final portfolio is allocated to each stock, "
-        "together with each stock’s historical return, risk, and sustainability rating."
+        "together with each stock’s CAGR-based return estimate, annualized volatility, and sustainability rating."
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -473,12 +508,12 @@ with tab1:
     st.subheader("What the Asset Statistics Mean")
 
     st.write(
-        f"**{name1}** has an estimated annual return of **{stats['r1']*100:.2f}%** and annual volatility of **{stats['sd1']*100:.2f}%**. "
-        f"Its ESG profile translates into a **{rating1} ({level1})** rating."
+        f"**{name1}** has an estimated annual return of **{stats['r1']*100:.2f}%**, measured using CAGR over the sample period, "
+        f"and annual volatility of **{stats['sd1']*100:.2f}%**. Its ESG profile translates into a **{rating1} ({level1})** rating."
     )
     st.write(
-        f"**{name2}** has an estimated annual return of **{stats['r2']*100:.2f}%** and annual volatility of **{stats['sd2']*100:.2f}%**. "
-        f"Its ESG profile translates into a **{rating2} ({level2})** rating."
+        f"**{name2}** has an estimated annual return of **{stats['r2']*100:.2f}%**, measured using CAGR over the sample period, "
+        f"and annual volatility of **{stats['sd2']*100:.2f}%**. Its ESG profile translates into a **{rating2} ({level2})** rating."
     )
     st.write(
         f"The correlation between the two assets is **{stats['rho']:.3f}**, which measures how similarly they move over time. "
