@@ -10,7 +10,7 @@ from itertools import combinations
 # --------------------------------------------------
 st.set_page_config(
     page_title="GreenVest Portfolio Optimizer",
-    page_icon="🫃🏾",
+    page_icon="♻️",
     layout="wide"
 )
 
