@@ -10,7 +10,7 @@ from itertools import combinations
 # --------------------------------------------------
 st.set_page_config(
     page_title="GreenVest Portfolio Optimizer",
-    page_icon="♻️",
+    page_icon="🌿",
     layout="wide"
 )
 
@@ -23,10 +23,10 @@ st.markdown("""
         background: linear-gradient(180deg, #f4fbf6 0%, #e8f5e9 100%);
     }
     .main-title {
-        font-size: 2.5rem;
+        font-size: 2.6rem;
         font-weight: 800;
         color: #1b5e20;
-        margin-bottom: 0.2rem;
+        margin-bottom: 0.15rem;
     }
     .subtitle {
         font-size: 1.05rem;
@@ -63,9 +63,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="main-title">👔 GreenVest Portfolio Optimizer</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">🌿 GreenVest Portfolio Optimizer</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="subtitle">Find sustainable portfolio recommendations based on risk tolerance and ESG preferences.</div>',
+    '<div class="subtitle">A sustainable finance app for portfolio selection based on risk and ESG preferences.</div>',
     unsafe_allow_html=True
 )
 
@@ -89,10 +89,14 @@ def load_data():
         "Governance": "governance",
         "Social": "social",
         "ESG Score": "esg_score",
+        "Environmental Weight": "environmental_weight",
+        "Social weight": "social_weight",
+        "Governance Weight": "governance_weight",
         "Name": "name"
     })
     esg["ticker"] = esg["ticker"].astype(str).str.strip()
 
+    # Build ticker -> name map
     if "name" in prices.columns:
         prices["name"] = prices["name"].astype(str).str.strip()
         price_name_map = prices[["ticker", "name"]].dropna().drop_duplicates()
@@ -118,6 +122,11 @@ def load_data():
 
     prices = prices.drop(columns=["name"], errors="ignore").merge(name_map, on="ticker", how="left")
     esg = esg.drop(columns=["name"], errors="ignore").merge(name_map, on="ticker", how="left")
+
+    # Fallback for missing weight columns
+    for col in ["environmental_weight", "social_weight", "governance_weight"]:
+        if col not in esg.columns:
+            esg[col] = 1/3
 
     esg = esg.dropna(subset=["ticker", "environmental", "social", "governance", "esg_score"])
     esg["esg_mean_score"] = esg["esg_score"] / 3
@@ -185,24 +194,28 @@ def compute_cagr(price_series, date_series):
 
     return (end_price / start_price) ** (1 / years) - 1
 
-def get_single_asset_summary(prices_df, ticker):
-    df = prices_df[prices_df["ticker"] == ticker][["date", "price"]].sort_values("date").copy()
-    if len(df) < 12:
-        return None
+@st.cache_data
+def get_single_asset_summary_all(prices_df):
+    summaries = []
+    for ticker in prices_df["ticker"].drop_duplicates():
+        df = prices_df[prices_df["ticker"] == ticker][["date", "price"]].sort_values("date").copy()
+        if len(df) < 12:
+            continue
 
-    df["ret"] = df["price"].pct_change()
-    df = df.dropna()
+        cagr = compute_cagr(df["price"].reset_index(drop=True), df["date"].reset_index(drop=True))
+        df["ret"] = df["price"].pct_change()
+        df = df.dropna()
 
-    if len(df) < 12:
-        return None
+        if len(df) < 12 or pd.isna(cagr):
+            continue
 
-    cagr = compute_cagr(
-        prices_df[prices_df["ticker"] == ticker].sort_values("date")["price"].reset_index(drop=True),
-        prices_df[prices_df["ticker"] == ticker].sort_values("date")["date"].reset_index(drop=True)
-    )
-    risk = df["ret"].std() * np.sqrt(12)
-
-    return {"expected_return": cagr, "risk": risk}
+        risk = df["ret"].std() * np.sqrt(12)
+        summaries.append({
+            "ticker": ticker,
+            "expected_return": cagr,
+            "risk": risk
+        })
+    return pd.DataFrame(summaries)
 
 def get_asset_stats(prices_df, ticker1, ticker2):
     raw1 = prices_df[prices_df["ticker"] == ticker1][["date", "price"]].sort_values("date").copy()
@@ -302,86 +315,101 @@ def describe_investment_type(risk, esg_mean, sharpe):
 
     return f"This portfolio is a {risk_text} investment with {esg_text}, and it appears {efficiency_text}."
 
-# --------------------------------------------------
-# SIDEBAR INPUTS
-# --------------------------------------------------
-st.sidebar.header("Investor Preferences")
+def get_esg_focus_weights(esg_focus):
+    if esg_focus == "Balanced ESG":
+        return 1/3, 1/3, 1/3, 0.75
+    elif esg_focus == "Environmental":
+        return 0.7, 0.15, 0.15, 0.85
+    elif esg_focus == "Social":
+        return 0.15, 0.7, 0.15, 0.85
+    else:
+        return 0.15, 0.15, 0.7, 0.85
 
-mode = st.sidebar.radio(
-    "Choose App Mode",
-    ["Simple Recommendation", "Advanced Comparison"]
+def add_preference_scores(esg_df, esg_focus):
+    env_weight, soc_weight, gov_weight, lambda_esg = get_esg_focus_weights(esg_focus)
+    out = esg_df.copy()
+    out["preference_score"] = (
+        env_weight * out["environmental"] +
+        soc_weight * out["social"] +
+        gov_weight * out["governance"]
+    )
+    return out, lambda_esg
+
+def plot_esg_pie(ax, row, title):
+    labels = ["Environmental", "Social", "Governance"]
+    values = [
+        row["environmental_weight"],
+        row["social_weight"],
+        row["governance_weight"]
+    ]
+    colors = ["#66bb6a", "#42a5f5", "#ffa726"]
+    ax.pie(values, labels=labels, autopct="%1.0f%%", startangle=90, colors=colors, textprops={"fontsize": 10})
+    ax.set_title(title, fontsize=12, fontweight="bold")
+
+# --------------------------------------------------
+# NAVIGATION
+# --------------------------------------------------
+page = st.sidebar.radio(
+    "Navigate",
+    ["Home", "Recommendation Engine", "Self Designation"]
 )
 
-esg_focus = st.sidebar.selectbox(
-    "Preferred ESG Focus",
-    ["Balanced ESG", "Environmental", "Social", "Governance"]
-)
-
-gamma = st.sidebar.slider("Risk Tolerance / Aversion (γ)", 0.5, 10.0, 5.0, 0.5)
-r_free = st.sidebar.number_input("Risk-Free Rate (%)", min_value=0.0, max_value=15.0, value=2.0, step=0.1) / 100
-
-if esg_focus == "Balanced ESG":
-    env_weight, soc_weight, gov_weight = 1/3, 1/3, 1/3
-    lambda_esg = 0.6
-elif esg_focus == "Environmental":
-    env_weight, soc_weight, gov_weight = 0.7, 0.15, 0.15
-    lambda_esg = 0.7
-elif esg_focus == "Social":
-    env_weight, soc_weight, gov_weight = 0.15, 0.7, 0.15
-    lambda_esg = 0.7
-else:
-    env_weight, soc_weight, gov_weight = 0.15, 0.15, 0.7
-    lambda_esg = 0.7
-
-esg["preference_score"] = (
-    env_weight * esg["environmental"] +
-    soc_weight * esg["social"] +
-    gov_weight * esg["governance"]
-)
-
 # --------------------------------------------------
-# SIMPLE RECOMMENDATION MODE
+# HOME PAGE
 # --------------------------------------------------
-if mode == "Simple Recommendation":
+if page == "Home":
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.subheader("Simple Recommendation")
+    st.subheader("Welcome")
     st.write(
-        "This mode identifies promising stocks based on your ESG focus and historical performance, "
-        "then builds the optimized two-asset portfolio."
+        "This app helps users build a two-stock sustainable portfolio using historical price data and ESG characteristics."
     )
+    st.write("Choose one of the two workflows from the sidebar:")
+    st.write("**Recommendation Engine**: the app finds two suitable stocks for the user.")
+    st.write("**Self Designation**: the user manually chooses the two stocks to compare.")
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.stop()
 
-    summaries = []
-    for ticker in prices["ticker"].drop_duplicates():
-        s = get_single_asset_summary(prices, ticker)
-        if s is not None and pd.notna(s["expected_return"]) and pd.notna(s["risk"]):
-            summaries.append({
-                "ticker": ticker,
-                "expected_return": s["expected_return"],
-                "risk": s["risk"]
-            })
+# --------------------------------------------------
+# RECOMMENDATION ENGINE
+# --------------------------------------------------
+if page == "Recommendation Engine":
+    st.sidebar.header("Recommendation Inputs")
+    esg_focus = st.sidebar.selectbox(
+        "Preferred ESG Focus",
+        ["Balanced ESG", "Environmental", "Social", "Governance"],
+        key="rec_esg_focus"
+    )
+    gamma = st.sidebar.slider("Risk Tolerance / Aversion (γ)", 0.5, 10.0, 5.0, 0.5, key="rec_gamma")
+    r_free = st.sidebar.number_input("Risk-Free Rate (%)", min_value=0.0, max_value=15.0, value=2.0, step=0.1, key="rec_rf") / 100
 
-    asset_summary = pd.DataFrame(summaries)
+    esg_pref, lambda_esg = add_preference_scores(esg, esg_focus)
+    asset_summary = get_single_asset_summary_all(prices)
 
-    universe = esg.merge(asset_summary, on="ticker", how="inner")
+    universe = esg_pref.merge(asset_summary, on="ticker", how="inner")
 
+    # Cap candidate returns at 20%
+    universe = universe[universe["expected_return"] <= 0.20].copy()
+
+    # Stronger ESG-first ranking
     universe["selection_score"] = (
-        0.55 * (universe["preference_score"] / 10) +
-        0.30 * universe["expected_return"] -
-        0.15 * universe["risk"]
+        0.70 * (universe["preference_score"] / 10) +
+        0.20 * universe["expected_return"] -
+        0.10 * universe["risk"]
     )
 
-    top_assets = universe.sort_values("selection_score", ascending=False).head(15).copy()
+    # Smaller shortlist for speed
+    shortlist = universe.sort_values("selection_score", ascending=False).head(10).copy()
 
     best_pair = None
     best_pair_score = -np.inf
 
-    for t1, t2 in combinations(top_assets["ticker"], 2):
+    for t1, t2 in combinations(shortlist["ticker"], 2):
         stats = get_asset_stats(prices, t1, t2)
         if stats is None:
             continue
 
-        esg1 = float(esg.loc[esg["ticker"] == t1, "preference_score"].iloc[0])
-        esg2 = float(esg.loc[esg["ticker"] == t2, "preference_score"].iloc[0])
+        esg1 = float(esg_pref.loc[esg_pref["ticker"] == t1, "preference_score"].iloc[0])
+        esg2 = float(esg_pref.loc[esg_pref["ticker"] == t2, "preference_score"].iloc[0])
 
         result = optimize_two_asset_portfolio(
             stats["r1"], stats["r2"],
@@ -396,24 +424,37 @@ if mode == "Simple Recommendation":
             best_pair = (t1, t2, stats, result)
 
     if best_pair is None:
-        st.error("No valid stock pair could be formed from the available data.")
+        st.error("No valid stock pair could be formed under the current recommendation constraints.")
         st.stop()
 
     ticker1, ticker2, stats, result = best_pair
 
 # --------------------------------------------------
-# ADVANCED COMPARISON MODE
+# SELF DESIGNATION
 # --------------------------------------------------
 else:
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.subheader("Advanced Comparison")
+    st.sidebar.header("Self Designation Inputs")
+    esg_focus = st.sidebar.selectbox(
+        "Preferred ESG Focus",
+        ["Balanced ESG", "Environmental", "Social", "Governance"],
+        key="self_esg_focus"
+    )
+    gamma = st.sidebar.slider("Risk Tolerance / Aversion (γ)", 0.5, 10.0, 5.0, 0.5, key="self_gamma")
+    r_free = st.sidebar.number_input("Risk-Free Rate (%)", min_value=0.0, max_value=15.0, value=2.0, step=0.1, key="self_rf") / 100
+
+    esg_pref, lambda_esg = add_preference_scores(esg, esg_focus)
 
     search_df = name_map.copy()
     search_df["label"] = build_label(search_df)
 
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.subheader("Choose Two Stocks")
+
     labels = sorted(search_df["label"].tolist())
     label1 = st.selectbox("Select Asset 1", labels)
     label2 = st.selectbox("Select Asset 2", labels, index=1 if len(labels) > 1 else 0)
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
     ticker1 = search_df.loc[search_df["label"] == label1, "ticker"].iloc[0]
     ticker2 = search_df.loc[search_df["label"] == label2, "ticker"].iloc[0]
@@ -427,8 +468,8 @@ else:
         st.error("Not enough overlapping data to compare these two assets.")
         st.stop()
 
-    esg1 = float(esg.loc[esg["ticker"] == ticker1, "preference_score"].iloc[0])
-    esg2 = float(esg.loc[esg["ticker"] == ticker2, "preference_score"].iloc[0])
+    esg1 = float(esg_pref.loc[esg_pref["ticker"] == ticker1, "preference_score"].iloc[0])
+    esg2 = float(esg_pref.loc[esg_pref["ticker"] == ticker2, "preference_score"].iloc[0])
 
     result = optimize_two_asset_portfolio(
         stats["r1"], stats["r2"],
@@ -554,6 +595,19 @@ with tab2:
     st.write(
         "The frontier shows all possible portfolios formed by combining the two selected stocks. "
         "The dark green diamond marks the portfolio with the highest utility given your risk tolerance and ESG preference."
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.subheader("ESG Weight Composition of Each Stock")
+
+    fig2, axes = plt.subplots(1, 2, figsize=(12, 5))
+    plot_esg_pie(axes[0], esg_row_1, f"{name1} ESG Weight Mix")
+    plot_esg_pie(axes[1], esg_row_2, f"{name2} ESG Weight Mix")
+    st.pyplot(fig2)
+
+    st.write(
+        "These pie charts show how each stock’s ESG framework is distributed across Environmental, Social, and Governance factors."
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
