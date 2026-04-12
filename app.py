@@ -172,6 +172,21 @@ st.markdown("""
         border-radius: 14px !important;
     }
 
+    /* Slider teal styling */
+    .stSlider [role="slider"] {
+        background-color: #0f766e !important;
+        border: 2px solid #0f766e !important;
+    }
+    .stSlider [data-baseweb="slider"] > div > div > div:nth-child(1) {
+        background: #99f6e4 !important;
+    }
+    .stSlider [data-baseweb="slider"] > div > div > div:nth-child(2) {
+        background: #0d9488 !important;
+    }
+    .stSlider [data-testid="stThumbValue"] {
+        color: #0f766e !important;
+    }
+
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
 </style>
@@ -521,7 +536,7 @@ def render_outputs(
             "Risk (%)": [stats["sd1"] * 100, stats["sd2"] * 100],
             "Average ESG Score": [esg_row_1["esg_mean_score"], esg_row_2["esg_mean_score"]],
             "ESG Rating": [rating1, rating2]
-        })
+        }).round(2)
         st.dataframe(weights_df, use_container_width=True)
 
         st.write(
@@ -539,14 +554,14 @@ def render_outputs(
             f"and annual volatility of **{stats['sd2']*100:.2f}%**. Its ESG profile translates into a **{rating2} ({level2})** rating."
         )
         st.write(
-            f"The correlation between the two assets is **{stats['rho']:.3f}**, which measures how similarly they move over time. "
+            f"The correlation between the two assets is **{stats['rho']:.2f}**, which measures how similarly they move over time. "
             f"Lower correlation generally means better diversification benefits."
         )
 
     with tab2:
         st.markdown("### Portfolio Frontier")
 
-        fig, ax = plt.subplots(figsize=(8, 4.8))
+        fig, ax = plt.subplots(figsize=(5.12, 3.07))
         fig.patch.set_facecolor("white")
         ax.set_facecolor("#f7fbff")
 
@@ -554,28 +569,33 @@ def render_outputs(
             result["portfolio_risks"],
             result["portfolio_returns"],
             color="#0b5cad",
-            linewidth=2.5,
+            linewidth=2.2,
             label="Portfolio Frontier"
         )
 
-        ax.scatter(stats["sd1"], stats["r1"], color="#6bb8ff", s=95, label=name1, zorder=5)
-        ax.scatter(stats["sd2"], stats["r2"], color="#2f8f3a", s=95, label=name2, zorder=5)
-        ax.scatter(result["risk_opt"], result["ret_opt"], color="#17324d", s=120, marker="D", label="Optimal Portfolio", zorder=6)
+        ax.scatter(stats["sd1"], stats["r1"], color="#6bb8ff", s=70, label=name1, zorder=5)
+        ax.scatter(stats["sd2"], stats["r2"], color="#2f8f3a", s=70, label=name2, zorder=5)
+        ax.scatter(result["risk_opt"], result["ret_opt"], color="#17324d", s=80, marker="D", label="Optimal Portfolio", zorder=6)
 
-        ax.set_title("Risk-Return Frontier", fontsize=14, color="#17324d", fontweight="bold")
-        ax.set_xlabel("Risk (Standard Deviation)")
-        ax.set_ylabel("Expected Return")
-        ax.xaxis.set_major_formatter(mtick.PercentFormatter(1.0))
-        ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+        ax.set_title("Risk-Return Frontier", fontsize=12, color="#17324d", fontweight="bold")
+        ax.set_xlabel("Risk (Standard Deviation)", fontsize=9)
+        ax.set_ylabel("Expected Return", fontsize=9)
+        ax.xaxis.set_major_formatter(mtick.PercentFormatter(1.0, decimals=2))
+        ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0, decimals=2))
+        ax.tick_params(axis="both", labelsize=6)
         ax.grid(True, alpha=0.25, color="#b9d3ec")
         ax.legend(
             loc="upper left",
             frameon=True,
             facecolor="white",
             edgecolor="#bfd8f5",
-            fontsize=10,
-            markerscale=0.9,
-            scatterpoints=1
+            fontsize=8,
+            markerscale=0.8,
+            scatterpoints=1,
+            borderpad=0.6,
+            labelspacing=0.5,
+            handlelength=1.8,
+            handletextpad=0.6
         )
 
         st.pyplot(fig)
@@ -608,7 +628,7 @@ def render_outputs(
             "Average ESG Score": [esg_row_1["esg_mean_score"], esg_row_2["esg_mean_score"]],
             "ESG Rating": [rating1, rating2],
             "Category": [level1, level2]
-        })
+        }).round(2)
         st.dataframe(esg_display, use_container_width=True)
 
         st.write("**How to read the rating scale**")
@@ -627,12 +647,15 @@ def render_outputs(
 # HOME PAGE
 # --------------------------------------------------
 if st.session_state.page == "home":
-    render_brand_header(show_tagline=False)
+    col_logo_left, col_logo_mid, col_logo_right = st.columns([2, 1.2, 2])
+    with col_logo_mid:
+        st.image(logo, width=160)
 
     st.markdown("""
-        <div style="text-align: center; padding: 1.2rem 0 1rem 0;">
-            <div style="font-size: 3.0rem; font-weight: 900; color: #0b5cad; margin-bottom: 0.5rem; font-family: Georgia, 'Times New Roman', serif;">
-                Let It Grow
+        <div style="text-align: center; padding: 0.6rem 0 1rem 0;">
+            <div style="font-size: 3.2rem; font-weight: 900; margin-bottom: 0.5rem; font-family: Georgia, 'Times New Roman', serif;">
+                <span style="color:#0b5cad;">Let It </span>
+                <span style="color:#2f8f3a; text-shadow: 0 0 8px rgba(47,143,58,0.28), 0 0 16px rgba(107,184,255,0.16);">Grow</span>
             </div>
             <div style="font-size: 1.15rem; color: #48637d; max-width: 760px; margin: 0 auto;">
                 Build a personalised portfolio that balances financial returns, risk, and ESG values through real S&amp;P500 data and portfolio optimization.
@@ -685,7 +708,7 @@ if st.session_state.page == "home":
             <div class="home-text">The app selects two suitable stocks automatically based on your ESG focus, risk tolerance, and risk-free rate.</div>
         </div>
         """, unsafe_allow_html=True)
-        st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:30px;'></div>", unsafe_allow_html=True)
         if st.button("Open Recommendation Engine", key="rec_home", use_container_width=True):
             go_to("recommendation")
 
@@ -697,7 +720,7 @@ if st.session_state.page == "home":
             <div class="home-text">Choose any two S&P500 stocks from the dataset and compare them using return, risk, correlation, and ESG characteristics.</div>
         </div>
         """, unsafe_allow_html=True)
-        st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:30px;'></div>", unsafe_allow_html=True)
         if st.button("Open S&P500 Comparison", key="sp_home", use_container_width=True):
             go_to("sp500")
 
@@ -709,7 +732,7 @@ if st.session_state.page == "home":
             <div class="home-text">Manually enter two custom assets and all portfolio parameters to generate a fully custom optimised portfolio.</div>
         </div>
         """, unsafe_allow_html=True)
-        st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:30px;'></div>", unsafe_allow_html=True)
         if st.button("Open Custom Generator", key="custom_home", use_container_width=True):
             go_to("custom")
 
