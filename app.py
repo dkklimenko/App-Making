@@ -45,11 +45,22 @@ st.markdown("""
     .main-title {
         font-size: 3.35rem;
         font-weight: 900;
-        color: #0b5cad !important;
         margin-bottom: 0.15rem;
         letter-spacing: 0.4px;
         font-family: Georgia, "Times New Roman", serif;
+    }
+
+    .main-title-blue {
+        color: #0b5cad !important;
         text-shadow: 0 2px 0 rgba(255,255,255,0.55);
+    }
+
+    .main-title-green {
+        color: #2f8f3a !important;
+        text-shadow:
+            0 0 8px rgba(47, 143, 58, 0.28),
+            0 0 18px rgba(107, 184, 255, 0.18),
+            0 2px 0 rgba(255,255,255,0.45);
     }
 
     .subtitle {
@@ -172,19 +183,20 @@ st.markdown("""
         border-radius: 14px !important;
     }
 
-    /* Slider teal styling */
+    /* Slider styling - green */
+    .stSlider [data-baseweb="slider"] > div > div:nth-child(1) {
+        background: #bbf7d0 !important;
+    }
+    .stSlider [data-baseweb="slider"] > div > div:nth-child(2) {
+        background: #2f8f3a !important;
+    }
     .stSlider [role="slider"] {
-        background-color: #0f766e !important;
-        border: 2px solid #0f766e !important;
-    }
-    .stSlider [data-baseweb="slider"] > div > div > div:nth-child(1) {
-        background: #99f6e4 !important;
-    }
-    .stSlider [data-baseweb="slider"] > div > div > div:nth-child(2) {
-        background: #0d9488 !important;
+        background: #2f8f3a !important;
+        border: 2px solid #2f8f3a !important;
+        box-shadow: 0 0 0 3px rgba(47,143,58,0.16) !important;
     }
     .stSlider [data-testid="stThumbValue"] {
-        color: #0f766e !important;
+        color: #2f8f3a !important;
     }
 
     #MainMenu {visibility: hidden;}
@@ -484,7 +496,15 @@ def render_brand_header(show_tagline=True):
     with col1:
         st.image(logo, width=120)
     with col2:
-        st.markdown('<div class="main-title">Let It Grow</div>', unsafe_allow_html=True)
+        st.markdown(
+            """
+            <div class="main-title">
+                <span class="main-title-blue">Let It </span>
+                <span class="main-title-green">Grow</span>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
         if show_tagline:
             st.markdown(
                 '<div class="subtitle">Grow your wealth with purpose through sustainable portfolio design.</div>',
@@ -647,15 +667,17 @@ def render_outputs(
 # HOME PAGE
 # --------------------------------------------------
 if st.session_state.page == "home":
-    col_logo_left, col_logo_mid, col_logo_right = st.columns([2, 1.2, 2])
-    with col_logo_mid:
-        st.image(logo, width=160)
+    header_left, header_right = st.columns([1.2, 7])
+    with header_left:
+        st.image(logo, width=120)
+    with header_right:
+        st.markdown("")
 
     st.markdown("""
-        <div style="text-align: center; padding: 0.6rem 0 1rem 0;">
-            <div style="font-size: 3.2rem; font-weight: 900; margin-bottom: 0.5rem; font-family: Georgia, 'Times New Roman', serif;">
-                <span style="color:#0b5cad;">Let It </span>
-                <span style="color:#2f8f3a; text-shadow: 0 0 8px rgba(47,143,58,0.28), 0 0 16px rgba(107,184,255,0.16);">Grow</span>
+        <div style="text-align: center; padding: 0.2rem 0 1rem 0;">
+            <div class="main-title">
+                <span class="main-title-blue">Let It </span>
+                <span class="main-title-green">Grow</span>
             </div>
             <div style="font-size: 1.15rem; color: #48637d; max-width: 760px; margin: 0 auto;">
                 Build a personalised portfolio that balances financial returns, risk, and ESG values through real S&amp;P500 data and portfolio optimization.
