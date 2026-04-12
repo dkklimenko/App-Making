@@ -70,7 +70,7 @@ st.markdown("""
     }
 
     .page-panel {
-        background: rgba(255,255,255,0.72);
+        background: rgba(255,255,255,0.78);
         border: 1px solid #d7e4f2;
         border-radius: 18px;
         padding: 18px 22px;
@@ -136,7 +136,7 @@ st.markdown("""
     }
 
     div[data-testid="stMetric"] {
-        background-color: rgba(255,255,255,0.92) !important;
+        background-color: rgba(255,255,255,0.95) !important;
         border: 1px solid #d7e4f2 !important;
         border-radius: 14px !important;
         padding: 14px !important;
@@ -147,7 +147,7 @@ st.markdown("""
     .stNumberInput > div > div > input,
     .stSelectbox > div > div,
     textarea {
-        background-color: rgba(255,255,255,0.95) !important;
+        background-color: rgba(255,255,255,0.98) !important;
         border: 1px solid #d7e4f2 !important;
         border-radius: 10px !important;
         color: #17324d !important;
@@ -183,7 +183,7 @@ st.markdown("""
         border-radius: 14px !important;
     }
 
-    /* Slider styling - all green, no highlighted labels */
+    /* Slider styling - all green */
     .stSlider [data-baseweb="slider"] > div {
         background: transparent !important;
     }
@@ -197,7 +197,7 @@ st.markdown("""
         box-shadow: none !important;
     }
     .stSlider [data-testid="stThumbValue"] {
-        color: #2f8f3a !important;
+        color: #17324d !important;
         background: transparent !important;
         border: none !important;
         box-shadow: none !important;
@@ -594,55 +594,137 @@ def render_outputs(
     with tab2:
         st.markdown("### Portfolio Frontier")
 
-        fig, ax = plt.subplots(figsize=(2.87, 1.72))
-        fig.patch.set_facecolor("white")
-        ax.set_facecolor("#f7fbff")
+        # Build efficient frontier branch only
+        frontier_df = pd.DataFrame({
+            "risk": result["portfolio_risks"],
+            "ret": result["portfolio_returns"]
+        }).sort_values("risk").reset_index(drop=True)
 
+        min_risk_idx = frontier_df["risk"].idxmin()
+        efficient_branch = frontier_df.loc[min_risk_idx:].copy()
+
+        x_min = min(stats["sd1"], stats["sd2"], result["risk_opt"]) * 0.85
+        x_max = max(stats["sd1"], stats["sd2"], result["risk_opt"]) * 1.08
+        y_min = min(stats["r1"], stats["r2"], result["ret_opt"]) * 0.75
+        y_max = max(stats["r1"], stats["r2"], result["ret_opt"]) * 1.12
+
+        fig, ax = plt.subplots(figsize=(8.2, 5.2), dpi=170)
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("#fbfdff")
+
+        # Remove top/right spines for cleaner style
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_color("#0f2d68")
+        ax.spines["bottom"].set_color("#0f2d68")
+        ax.spines["left"].set_linewidth(1.5)
+        ax.spines["bottom"].set_linewidth(1.5)
+
+        # Grid
+        ax.grid(True, color="#c7d2e4", alpha=0.55, linewidth=0.8)
+
+        # Efficient frontier
         ax.plot(
-            result["portfolio_risks"],
-            result["portfolio_returns"],
-            color="#0b5cad",
-            linewidth=1.7,
-            label="Portfolio Frontier"
+            efficient_branch["risk"],
+            efficient_branch["ret"],
+            color="#4e9f58",
+            linewidth=4.0,
+            solid_capstyle="round",
+            label="Efficient Frontier",
+            zorder=2
         )
 
-        ax.scatter(stats["sd1"], stats["r1"], color="#6bb8ff", s=35, label=name1, zorder=5)
-        ax.scatter(stats["sd2"], stats["r2"], color="#2f8f3a", s=35, label=name2, zorder=5)
-        ax.scatter(result["risk_opt"], result["ret_opt"], color="#17324d", s=38, marker="D", label="Optimal Portfolio", zorder=6)
+        # Assets
+        ax.scatter(
+            stats["sd1"], stats["r1"],
+            s=260, color="#1f66c2", edgecolor="#184d93", linewidth=1.2,
+            label="Asset 1", zorder=5
+        )
+        ax.scatter(
+            stats["sd2"], stats["r2"],
+            s=260, color="#66a84f", edgecolor="#4c7e3b", linewidth=1.2,
+            label="Asset 2", zorder=5
+        )
 
-        ax.set_title("Risk-Return Frontier", fontsize=8, color="#17324d", fontweight="bold")
-        ax.set_xlabel("Risk (Std Dev)", fontsize=6)
-        ax.set_ylabel("Expected Return", fontsize=6)
-        ax.xaxis.set_major_formatter(mtick.PercentFormatter(1.0, decimals=2))
-        ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0, decimals=2))
-        ax.tick_params(axis="both", labelsize=4.5)
-        ax.grid(True, alpha=0.25, color="#b9d3ec")
-        ax.legend(
+        # Optimal portfolio
+        ax.scatter(
+            result["risk_opt"], result["ret_opt"],
+            s=620, color="#0f3d8c", edgecolor="#0a2a60", linewidth=1.0,
+            marker="*", label="Optimal Portfolio", zorder=6
+        )
+
+        # Labels near points
+        ax.annotate(
+            "Asset 1",
+            (stats["sd1"], stats["r1"]),
+            xytext=(-18, 8), textcoords="offset points",
+            fontsize=12, color="#0f2d68", ha="right", va="center"
+        )
+        ax.annotate(
+            "Asset 2",
+            (stats["sd2"], stats["r2"]),
+            xytext=(12, 8), textcoords="offset points",
+            fontsize=12, color="#3f7c39", ha="left", va="center"
+        )
+        ax.annotate(
+            "Optimal Portfolio",
+            (result["risk_opt"], result["ret_opt"]),
+            xytext=(18, -10), textcoords="offset points",
+            fontsize=15, color="#0f2d68", ha="left", va="center"
+        )
+
+        # Title and labels
+        ax.set_title("Risk-Return Frontier", fontsize=24, color="#0f2d68", fontweight="bold", pad=16)
+        ax.set_xlabel("Risk (Standard Deviation)", fontsize=18, color="#0f2d68", labelpad=12)
+        ax.set_ylabel("Expected Return", fontsize=18, color="#0f2d68", labelpad=14)
+
+        # Axis limits
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
+
+        # Ticks
+        ax.xaxis.set_major_formatter(mtick.PercentFormatter(1.0, decimals=1))
+        ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0, decimals=1))
+        ax.tick_params(axis="both", labelsize=14, colors="#0f2d68", width=1.2, length=5)
+
+        # Legend order to match reference
+        handles, labels = ax.get_legend_handles_labels()
+        order_names = ["Asset 1", "Asset 2", "Optimal Portfolio", "Efficient Frontier"]
+        ordered_handles = [handles[labels.index(name)] for name in order_names if name in labels]
+        ordered_labels = [name for name in order_names if name in labels]
+
+        legend = ax.legend(
+            ordered_handles,
+            ordered_labels,
             loc="upper left",
             frameon=True,
             facecolor="white",
-            edgecolor="#bfd8f5",
-            fontsize=2,
-            markerscale=0.3,
-            scatterpoints=1,
-            borderpad=0.18,
-            labelspacing=0.16,
-            handlelength=0.6,
-            handletextpad=0.2,
-            borderaxespad=0.2
+            edgecolor="#b9c8df",
+            fontsize=13,
+            borderpad=0.8,
+            labelspacing=0.6,
+            handlelength=2.2,
+            handletextpad=0.45,
+            markerscale=1.0
         )
+        for text, name in zip(legend.get_texts(), ordered_labels):
+            if name == "Efficient Frontier":
+                text.set_color("#4e9f58")
+            else:
+                text.set_color("#0f2d68")
 
-        st.pyplot(fig)
+        plt.tight_layout()
+        st.pyplot(fig, use_container_width=True)
 
         st.write(
-            "The frontier shows all possible portfolios formed by combining the two selected stocks. "
-            "The dark blue diamond marks the portfolio with the highest utility given your risk tolerance and ESG preference."
+            "The chart shows the efficient frontier for the two selected assets, together with each standalone asset and the utility-maximizing portfolio."
         )
 
         st.markdown("### ESG Weight Composition of Each Stock")
-        fig2, axes = plt.subplots(1, 2, figsize=(12, 5))
+        fig2, axes = plt.subplots(1, 2, figsize=(12, 5), dpi=140)
         plot_esg_pie(axes[0], esg_row_1, f"{name1} ESG Weight Mix")
         plot_esg_pie(axes[1], esg_row_2, f"{name2} ESG Weight Mix")
+        plt.tight_layout()
         st.pyplot(fig2)
 
         st.write(
@@ -707,8 +789,8 @@ if st.session_state.page == "home":
                 <div style="font-size: 1.8rem; margin-bottom: 0.5rem;">🌍</div>
                 <h3 style="color: #17324d; margin-bottom: 0.5rem;">The climate transition is here</h3>
                 <p style="color: #48637d; line-height: 1.4;">
-                Investors are shifting focus – from simply reducing emissions to actively allocating capital 
-                toward companies that are well positioned for a low-carbon future. But how do you know which 
+                Investors are shifting focus – from simply reducing emissions to actively allocating capital
+                toward companies that are well positioned for a low-carbon future. But how do you know which
                 stocks truly align with your values without sacrificing returns?
                 </p>
             </div>
@@ -720,8 +802,8 @@ if st.session_state.page == "home":
                 <div style="font-size: 1.8rem; margin-bottom: 0.5rem;">📈</div>
                 <h3 style="color: #17324d; margin-bottom: 0.5rem;">Retail investors demand more</h3>
                 <p style="color: #48637d; line-height: 1.4;">
-                Retail investors increasingly want their investments to reflect their ESG concerns. 
-                Let It Grow gives you the tools – powered by real S&P500 ESG data and modern portfolio theory – 
+                Retail investors increasingly want their investments to reflect their ESG concerns.
+                Let It Grow gives you the tools – powered by real S&P500 ESG data and modern portfolio theory –
                 to make informed, sustainable choices without ignoring risk-adjusted returns.
                 </p>
             </div>
@@ -814,23 +896,23 @@ if st.session_state.page == "home":
     st.markdown("## Three Ways To Build Your Let It Grow Portfolio")
     with st.expander("🤖 Recommendation Engine – fully automated"):
         st.write("""
-        - We analyse all S&P500 stocks using your selected ESG focus.  
-        - A scoring function selects the 10 most promising stocks.  
-        - Every pair is evaluated, and the pair that gives you the highest utility is recommended.  
+        - We analyse all S&P500 stocks using your selected ESG focus.
+        - A scoring function selects the 10 most promising stocks.
+        - Every pair is evaluated, and the pair that gives you the highest utility is recommended.
         - You only set your preferences – the app does the rest.
         """)
 
     with st.expander("📊 S&P500 Stocks Comparison – pick any two"):
         st.write("""
-        - Choose any two S&P500 stocks by name or ticker.  
-        - The app fetches returns, volatilities, correlation, and ESG scores.  
+        - Choose any two S&P500 stocks by name or ticker.
+        - The app fetches returns, volatilities, correlation, and ESG scores.
         - It then draws the efficient frontier and finds the optimal blend for your utility.
         """)
 
     with st.expander("🛠️ Advanced Custom Generator – full control"):
         st.write("""
-        - Define every parameter manually: return, risk, correlation, ESG scores, and internal E/S/G weights.  
-        - No dependency on the dataset – analyse any two assets you want.  
+        - Define every parameter manually: return, risk, correlation, ESG scores, and internal E/S/G weights.
+        - No dependency on the dataset – analyse any two assets you want.
         - Ideal for testing hypothetical or classroom portfolios.
         """)
 
