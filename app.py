@@ -183,73 +183,16 @@ st.markdown("""
         border-radius: 14px !important;
     }
 
-    /* Slider styling */
-    .stSlider [data-baseweb="slider"] > div {
-        background: transparent !important;
+    /* Keep slider green, but avoid aggressive text styling */
+    .stSlider [role="slider"] {
+        background: #2f8f3a !important;
+        border: 2px solid #2f8f3a !important;
+        box-shadow: none !important;
     }
 
     .stSlider [data-baseweb="slider"] > div > div,
     .stSlider [data-baseweb="slider"] > div > div > div {
         background: #2f8f3a !important;
-    }
-
-    .stSlider [role="slider"] {
-        background: #2f8f3a !important;
-        border: 2px solid #2f8f3a !important;
-        box-shadow: none !important;
-        outline: none !important;
-        -webkit-tap-highlight-color: transparent !important;
-    }
-
-    .stSlider [data-testid="stThumbValue"] {
-        color: #17324d !important;
-        background: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
-    }
-
-    .stSlider [data-testid="stTickBarMin"],
-    .stSlider [data-testid="stTickBarMax"],
-    .stSlider [data-testid="stTickBarMin"] *,
-    .stSlider [data-testid="stTickBarMax"] * {
-        color: #17324d !important;
-        background: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
-        outline: none !important;
-        text-shadow: none !important;
-        -webkit-text-fill-color: #17324d !important;
-        -webkit-tap-highlight-color: transparent !important;
-    }
-
-    .stSlider p,
-    .stSlider span,
-    .stSlider label,
-    .stSlider small,
-    .stSlider div {
-        color: #17324d !important;
-        background: transparent !important;
-        box-shadow: none !important;
-        outline: none !important;
-        -webkit-tap-highlight-color: transparent !important;
-    }
-
-    .stSlider *::selection,
-    .stSlider [data-testid="stTickBarMin"]::selection,
-    .stSlider [data-testid="stTickBarMax"]::selection,
-    .stSlider [data-testid="stTickBarMin"] *::selection,
-    .stSlider [data-testid="stTickBarMax"] *::selection {
-        background: transparent !important;
-        color: #17324d !important;
-    }
-
-    .stSlider *::-moz-selection,
-    .stSlider [data-testid="stTickBarMin"]::-moz-selection,
-    .stSlider [data-testid="stTickBarMax"]::-moz-selection,
-    .stSlider [data-testid="stTickBarMin"] *::-moz-selection,
-    .stSlider [data-testid="stTickBarMax"] *::-moz-selection {
-        background: transparent !important;
-        color: #17324d !important;
     }
 
     #MainMenu {visibility: hidden;}
@@ -430,28 +373,28 @@ def get_asset_stats(prices_df, ticker1, ticker2):
         "rho": rho
     }
 
-def optimize_two_asset_portfolio(r1, r2, sd1, sd2, rho, esg1, esg2, gamma, lambda_esg):
+def optimize_two_asset_portfolio(r1, r2, sd1, sd2, rho, pref1, pref2, gamma, lambda_esg):
     weights = np.linspace(0, 1, 1001)
 
     returns = []
     risks = []
-    esgs = []
+    prefs = []
     utilities = []
 
     for w in weights:
         ret = portfolio_ret(w, r1, r2)
         risk = portfolio_sd(w, sd1, sd2, rho)
-        esg_val = portfolio_esg(w, esg1, esg2)
-        utility = portfolio_utility(ret, risk, esg_val, gamma, lambda_esg)
+        pref_val = portfolio_esg(w, pref1, pref2)
+        utility = portfolio_utility(ret, risk, pref_val, gamma, lambda_esg)
 
         returns.append(ret)
         risks.append(risk)
-        esgs.append(esg_val)
+        prefs.append(pref_val)
         utilities.append(utility)
 
     returns = np.array(returns)
     risks = np.array(risks)
-    esgs = np.array(esgs)
+    prefs = np.array(prefs)
     utilities = np.array(utilities)
 
     best_idx = np.argmax(utilities)
@@ -460,13 +403,12 @@ def optimize_two_asset_portfolio(r1, r2, sd1, sd2, rho, esg1, esg2, gamma, lambd
         "weights_grid": weights,
         "portfolio_returns": returns,
         "portfolio_risks": risks,
-        "portfolio_esgs": esgs,
+        "portfolio_preference_scores": prefs,
         "portfolio_utilities": utilities,
         "w1": weights[best_idx],
         "w2": 1 - weights[best_idx],
         "ret_opt": returns[best_idx],
         "risk_opt": risks[best_idx],
-        "esg_opt": esgs[best_idx],
         "utility_opt": utilities[best_idx]
     }
 
@@ -497,8 +439,7 @@ def compute_tangency_portfolio(r1, r2, sd1, sd2, rho, r_free):
         "w1": best_w,
         "w2": 1 - best_w,
         "ret_tangency": best_ret,
-        "sd_tangency": best_sd,
-        "sharpe_tangency": best_sharpe if np.isfinite(best_sharpe) else 0.0
+        "sd_tangency": best_sd
     }
 
 def describe_investment_type(risk, esg_mean, sharpe, esg_focus):
@@ -541,7 +482,6 @@ def get_esg_focus_weights(esg_focus):
         return 1/3, 1/3, 1/3, 0.0
 
 def add_preference_scores(esg_df, esg_focus):
-    env_weight, soc_weight, gov_weight, lambda_esg = get_esg_focus_weights(esg_focus)
     out = esg_df.copy()
 
     if esg_focus == "Balanced ESG":
@@ -555,6 +495,7 @@ def add_preference_scores(esg_df, esg_focus):
     else:
         out["preference_score"] = 0.0
 
+    _, _, _, lambda_esg = get_esg_focus_weights(esg_focus)
     return out, lambda_esg
 
 def plot_esg_pie(ax, row, title):
@@ -781,7 +722,6 @@ def render_outputs(
     rating1, rating2, level1, level2,
     recommendation_reason=None
 ):
-    # True portfolio ESG rating must always be based on the stocks' actual average ESG scores
     portfolio_esg_mean = (
         result["w1"] * float(esg_row_1["esg_mean_score"]) +
         result["w2"] * float(esg_row_2["esg_mean_score"])
@@ -860,56 +800,14 @@ def render_outputs(
         )
 
     with tab2:
-        st.markdown("### Risk-Return Frontier")
+        st.markdown("### Portfolio Visualization")
 
-        weights_plot = np.linspace(0, 1, 400)
-        returns_all = np.array([portfolio_ret(w, stats["r1"], stats["r2"]) for w in weights_plot])
-        risks_all = np.array([portfolio_sd(w, stats["sd1"], stats["sd2"], stats["rho"]) for w in weights_plot])
+        # Base structure from your original graph code, recolored to match the app
+        weights_plot = np.linspace(0, 1, 200)
+        returns_frontier = [portfolio_ret(w, stats["r1"], stats["r2"]) for w in weights_plot]
+        sds_frontier = [portfolio_sd(w, stats["sd1"], stats["sd2"], stats["rho"]) for w in weights_plot]
 
-        # Keep only the clean efficient upper branch
-        min_var_idx = np.argmin(risks_all)
-        min_var_ret = returns_all[min_var_idx]
-        efficient_mask = returns_all >= (min_var_ret - 1e-12)
-
-        frontier_risks = risks_all[efficient_mask]
-        frontier_returns = returns_all[efficient_mask]
-
-        order = np.argsort(frontier_risks)
-        frontier_risks = frontier_risks[order]
-        frontier_returns = frontier_returns[order]
-
-        unique_sd, unique_idx = np.unique(np.round(frontier_risks, 8), return_index=True)
-        frontier_risks = frontier_risks[unique_idx]
-        frontier_returns = frontier_returns[unique_idx]
-
-        sd_max = max(
-            np.max(frontier_risks),
-            stats["sd1"],
-            stats["sd2"],
-            result["risk_opt"],
-            sd_tangency
-        ) * 1.18
-
-        sd_cml = np.linspace(0, sd_max, 200)
-        if sd_tangency > 0:
-            ret_cml = r_free + ((ret_tangency - r_free) / sd_tangency) * sd_cml
-        else:
-            ret_cml = np.ones_like(sd_cml) * r_free
-
-        x_min = 0
-        x_max = sd_max
-        y_candidates = [
-            np.min(frontier_returns),
-            stats["r1"],
-            stats["r2"],
-            result["ret_opt"],
-            ret_tangency,
-            r_free
-        ]
-        y_min = min(y_candidates) - 0.03
-        y_max = max(max(y_candidates), np.max(ret_cml)) + 0.03
-
-        fig, ax = plt.subplots(figsize=(10.4, 6.4), dpi=170)
+        fig, ax = plt.subplots(figsize=(10, 6), dpi=170)
         fig.patch.set_facecolor("white")
         ax.set_facecolor("#fbfdff")
 
@@ -919,17 +817,22 @@ def render_outputs(
         ax.spines["bottom"].set_color("#0f2d68")
         ax.spines["left"].set_linewidth(1.6)
         ax.spines["bottom"].set_linewidth(1.6)
-
         ax.grid(True, color="#c7d2e4", alpha=0.55, linewidth=0.8)
 
         frontier_handle, = ax.plot(
-            frontier_risks,
-            frontier_returns,
+            sds_frontier,
+            returns_frontier,
             color="#4e9f58",
-            linewidth=4.2,
-            solid_capstyle="round",
+            linewidth=3.8,
             label="Efficient Frontier",
             zorder=2
+        )
+
+        sd_max = max(sds_frontier) * 1.2
+        sd_cml = np.linspace(0, sd_max, 100)
+        ret_cml = (
+            r_free + (ret_tangency - r_free) / sd_tangency * sd_cml
+            if sd_tangency > 0 else r_free * np.ones_like(sd_cml)
         )
 
         cml_handle, = ax.plot(
@@ -937,51 +840,48 @@ def render_outputs(
             ret_cml,
             linestyle="--",
             color="#0b5cad",
-            linewidth=2.7,
+            linewidth=2.6,
             label="Capital Market Line",
             zorder=1
         )
 
-        asset1_handle = ax.scatter(
-            stats["sd1"], stats["r1"],
-            s=230, color="#1f66c2", edgecolor="#184d93", linewidth=1.2,
-            label=name1, zorder=5
-        )
-
-        asset2_handle = ax.scatter(
-            stats["sd2"], stats["r2"],
-            s=230, color="#66a84f", edgecolor="#4c7e3b", linewidth=1.2,
-            label=name2, zorder=5
-        )
-
         tangency_handle = ax.scatter(
             sd_tangency, ret_tangency,
-            s=520, color="#2f8f3a", edgecolor="#246d2d", linewidth=1.0,
-            marker="*", label="Tangency Portfolio", zorder=6
+            color="#2f8f3a", edgecolor="#246d2d",
+            s=360, zorder=6, marker='*', label='Tangency Portfolio'
         )
 
         optimal_handle = ax.scatter(
             result["risk_opt"], result["ret_opt"],
-            s=230, color="#ffb84d", edgecolor="#d08c24", linewidth=1.2,
-            marker="D", label="Your Optimal Portfolio", zorder=7
+            color="#ffb84d", edgecolor="#d08c24",
+            s=180, zorder=6, marker='D', label='Your Optimal Portfolio'
         )
 
         rf_handle = ax.scatter(
             0, r_free,
-            s=170, color="#6bb8ff", edgecolor="#3d8ed8", linewidth=1.1,
-            marker="s", label="Risk-Free Asset", zorder=6
+            color="#6bb8ff", edgecolor="#3d8ed8",
+            s=150, zorder=6, marker='s', label='Risk-Free Asset'
         )
 
-        ax.set_title("Risk-Return Frontier", fontsize=24, color="#0f2d68", fontweight="bold", pad=16)
-        ax.set_xlabel("Risk (Standard Deviation)", fontsize=17, color="#0f2d68", labelpad=12)
-        ax.set_ylabel("Expected Return", fontsize=17, color="#0f2d68", labelpad=14)
+        asset1_handle = ax.scatter(
+            stats["sd1"], stats["r1"],
+            color="#1f66c2", edgecolor="#184d93",
+            s=140, zorder=6, marker='o', label=name1
+        )
 
-        ax.set_xlim(x_min, x_max)
-        ax.set_ylim(y_min, y_max)
+        asset2_handle = ax.scatter(
+            stats["sd2"], stats["r2"],
+            color="#66a84f", edgecolor="#4c7e3b",
+            s=140, zorder=6, marker='o', label=name2
+        )
+
+        ax.set_xlabel('Risk (Standard Deviation)', fontsize=16, color="#0f2d68", labelpad=12)
+        ax.set_ylabel('Expected Return', fontsize=16, color="#0f2d68", labelpad=14)
+        ax.set_title('Risk-Return Frontier', fontsize=24, color="#0f2d68", fontweight="bold", pad=16)
 
         ax.xaxis.set_major_formatter(mtick.PercentFormatter(1.0, decimals=1))
         ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0, decimals=1))
-        ax.tick_params(axis="both", labelsize=13, colors="#0f2d68", width=1.2, length=5)
+        ax.tick_params(axis="both", labelsize=12.5, colors="#0f2d68", width=1.2, length=5)
 
         legend = ax.legend(
             handles=[
@@ -1020,8 +920,8 @@ def render_outputs(
         st.pyplot(fig, use_container_width=True)
 
         st.write(
-            "The chart shows the two-asset efficient frontier, the Capital Market Line, the tangency portfolio, "
-            "your utility-maximizing portfolio, and the risk-free asset."
+            "The chart shows the efficient frontier, the Capital Market Line, the tangency portfolio, "
+            "your optimal portfolio, the risk-free asset, and the two selected stocks."
         )
 
         st.markdown("### ESG Weight Composition of Each Stock")
@@ -1238,7 +1138,7 @@ elif st.session_state.page == "recommendation":
             key="rec_esg_focus"
         )
     with col2:
-        gamma = st.slider("Risk Tolerance / Aversion (γ)", 0.5, 10.0, 5.0, 0.5, key="rec_gamma")
+        gamma = st.slider("Risk Aversion (γ)", min_value=0.1, max_value=10.0, value=5.0, step=0.1, key="rec_gamma")
     with col3:
         r_free = st.number_input("Risk-Free Rate (%)", min_value=0.0, max_value=15.0, value=2.0, step=0.1, key="rec_rf") / 100
 
@@ -1301,7 +1201,7 @@ elif st.session_state.page == "sp500":
             key="sp_esg_focus"
         )
     with c2:
-        gamma = st.slider("Risk Tolerance / Aversion (γ)", 0.5, 10.0, 5.0, 0.5, key="sp_gamma")
+        gamma = st.slider("Risk Aversion (γ)", min_value=0.1, max_value=10.0, value=5.0, step=0.1, key="sp_gamma")
     with c3:
         r_free = st.number_input("Risk-Free Rate (%)", min_value=0.0, max_value=15.0, value=2.0, step=0.1, key="sp_rf") / 100
 
@@ -1374,7 +1274,7 @@ elif st.session_state.page == "custom":
             key="custom_esg_focus"
         )
     with c2:
-        gamma = st.slider("Risk Tolerance / Aversion (γ)", 0.5, 10.0, 5.0, 0.5, key="custom_gamma")
+        gamma = st.slider("Risk Aversion (γ)", min_value=0.1, max_value=10.0, value=5.0, step=0.1, key="custom_gamma")
     with c3:
         r_free = st.number_input("Risk-Free Rate (%)", min_value=0.0, max_value=15.0, value=2.0, step=0.1, key="custom_rf") / 100
 
