@@ -187,21 +187,25 @@ st.markdown("""
     .stSlider [data-baseweb="slider"] > div {
         background: transparent !important;
     }
+
     .stSlider [data-baseweb="slider"] > div > div,
     .stSlider [data-baseweb="slider"] > div > div > div {
         background: #2f8f3a !important;
     }
+
     .stSlider [role="slider"] {
         background: #2f8f3a !important;
         border: 2px solid #2f8f3a !important;
         box-shadow: none !important;
     }
+
     .stSlider [data-testid="stThumbValue"] {
         color: #17324d !important;
         background: transparent !important;
         border: none !important;
         box-shadow: none !important;
     }
+
     .stSlider [data-testid="stTickBarMin"],
     .stSlider [data-testid="stTickBarMax"] {
         color: #17324d !important;
@@ -209,13 +213,22 @@ st.markdown("""
         border: none !important;
         box-shadow: none !important;
     }
+
     .stSlider p,
     .stSlider span,
     .stSlider label,
-    .stSlider small {
+    .stSlider small,
+    .stSlider div {
+        color: #17324d !important;
+    }
+
+    .stSlider *::selection {
         background: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
+        color: #17324d !important;
+    }
+
+    .stSlider *::-moz-selection {
+        background: transparent !important;
         color: #17324d !important;
     }
 
@@ -338,6 +351,18 @@ def compute_expected_return(price_series):
         return np.nan
     return returns.mean() * 12
 
+def normalize_series(s):
+    s = pd.Series(s).astype(float)
+    s = s.replace([np.inf, -np.inf], np.nan)
+    if s.isna().all():
+        return pd.Series(np.zeros(len(s)), index=s.index)
+    s = s.fillna(s.median())
+    s_min = s.min()
+    s_max = s.max()
+    if np.isclose(s_max, s_min):
+        return pd.Series(np.ones(len(s)) * 0.5, index=s.index)
+    return (s - s_min) / (s_max - s_min)
+
 @st.cache_data
 def get_single_asset_summary_all(prices_df):
     summaries = []
@@ -450,9 +475,9 @@ def compute_tangency_portfolio(r1, r2, sd1, sd2, rho, r_free):
         sd = portfolio_sd(w, sd1, sd2, rho)
 
         if sd <= 1e-12:
-            sharpe = -np.inf
-        else:
-            sharpe = (ret - r_free) / sd
+            continue
+
+        sharpe = (ret - r_free) / sd
 
         if sharpe > best_sharpe:
             best_sharpe = sharpe
@@ -465,7 +490,7 @@ def compute_tangency_portfolio(r1, r2, sd1, sd2, rho, r_free):
         "w2": 1 - best_w,
         "ret_tangency": best_ret,
         "sd_tangency": best_sd,
-        "sharpe_tangency": best_sharpe
+        "sharpe_tangency": best_sharpe if np.isfinite(best_sharpe) else 0.0
     }
 
 def describe_investment_type(risk, esg_mean, sharpe, esg_focus):
@@ -499,11 +524,11 @@ def get_esg_focus_weights(esg_focus):
     if esg_focus == "Balanced ESG":
         return 1/3, 1/3, 1/3, 0.75
     elif esg_focus == "Environmental":
-        return 0.7, 0.15, 0.15, 0.85
+        return 0.75, 0.125, 0.125, 1.00
     elif esg_focus == "Social":
-        return 0.15, 0.7, 0.15, 0.85
+        return 0.125, 0.75, 0.125, 1.00
     elif esg_focus == "Governance":
-        return 0.15, 0.15, 0.7, 0.85
+        return 0.125, 0.125, 0.75, 1.00
     else:
         return 1/3, 1/3, 1/3, 0.0
 
@@ -532,7 +557,152 @@ def plot_esg_pie(ax, row, title):
 
     colors = ["#2f8f3a", "#0b5cad", "#6bb8ff"]
     ax.pie(values, labels=labels, autopct="%1.0f%%", startangle=90, colors=colors, textprops={"fontsize": 10})
-    ax.set_title(title, fontsize=12, fontweight="bold")
+    ax.set_title(title, fontsize=12, fontweight="bold", color="#0f2d68")
+
+def build_recommendation_candidates(esg_pref, asset_summary, r_free, gamma, esg_focus):
+    universe = esg_pref.merge(asset_summary, on="ticker", how="inner").copy()
+    universe = universe.replace([np.inf, -np.inf], np.nan).dropna(
+        subset=["preference_score", "expected_return", "risk"]
+    )
+    universe = universe[universe["expected_return"] <= 0.25].copy()
+    universe = universe[universe["risk"] > 0].copy()
+
+    if universe.empty:
+        return universe
+
+    universe["excess_return"] = universe["expected_return"] - r_free
+    universe["sharpe_like"] = universe["excess_return"] / universe["risk"]
+
+    pref_n = normalize_series(universe["preference_score"])
+    ret_n = normalize_series(universe["expected_return"])
+    excess_n = normalize_series(universe["excess_return"])
+    sharpe_n = normalize_series(universe["sharpe_like"])
+    risk_n = normalize_series(universe["risk"])
+    low_risk_n = 1 - risk_n
+
+    gamma_scaled = (gamma - 0.5) / 9.5
+    gamma_scaled = min(max(gamma_scaled, 0), 1)
+
+    if esg_focus == "Pure Financials Focus":
+        universe["selection_score"] = (
+            0.42 * sharpe_n +
+            0.28 * excess_n +
+            0.20 * ret_n +
+            (0.20 * gamma_scaled) * low_risk_n
+        )
+    else:
+        universe["selection_score"] = (
+            0.48 * pref_n +
+            0.22 * sharpe_n +
+            0.15 * excess_n +
+            0.08 * ret_n +
+            (0.17 * gamma_scaled) * low_risk_n
+        )
+
+    top_pref = universe.sort_values("preference_score", ascending=False).head(20)
+    top_sel = universe.sort_values("selection_score", ascending=False).head(20)
+    top_sharpe = universe.sort_values("sharpe_like", ascending=False).head(15)
+    low_risk = universe.sort_values("risk", ascending=True).head(15)
+
+    candidates = pd.concat([top_pref, top_sel, top_sharpe, low_risk], ignore_index=True)
+    candidates = candidates.drop_duplicates(subset=["ticker"]).copy()
+
+    if len(candidates) > 35:
+        candidates = candidates.sort_values("selection_score", ascending=False).head(35)
+
+    return candidates
+
+def choose_recommended_pair(prices_df, esg_pref, candidates_df, gamma, lambda_esg, r_free, esg_focus):
+    pair_records = []
+
+    tickers = candidates_df["ticker"].tolist()
+    if len(tickers) < 2:
+        return None
+
+    for t1, t2 in combinations(tickers, 2):
+        stats = get_asset_stats(prices_df, t1, t2)
+        if stats is None:
+            continue
+
+        esg1 = float(esg_pref.loc[esg_pref["ticker"] == t1, "preference_score"].iloc[0])
+        esg2 = float(esg_pref.loc[esg_pref["ticker"] == t2, "preference_score"].iloc[0])
+
+        result = optimize_two_asset_portfolio(
+            stats["r1"], stats["r2"],
+            stats["sd1"], stats["sd2"],
+            stats["rho"],
+            esg1, esg2,
+            gamma, lambda_esg
+        )
+
+        risk_opt = max(result["risk_opt"], 1e-9)
+        sharpe_opt = (result["ret_opt"] - r_free) / risk_opt
+        pair_esg = result["esg_opt"] / 10
+        diversification = 1 - ((stats["rho"] + 1) / 2)
+
+        pair_records.append({
+            "ticker1": t1,
+            "ticker2": t2,
+            "stats": stats,
+            "result": result,
+            "esg1": esg1,
+            "esg2": esg2,
+            "utility_opt": result["utility_opt"],
+            "risk_opt": result["risk_opt"],
+            "ret_opt": result["ret_opt"],
+            "sharpe_opt": sharpe_opt,
+            "pair_esg": pair_esg,
+            "diversification": diversification
+        })
+
+    if not pair_records:
+        return None
+
+    pairs_df = pd.DataFrame(pair_records)
+
+    utility_n = normalize_series(pairs_df["utility_opt"])
+    sharpe_n = normalize_series(pairs_df["sharpe_opt"])
+    esg_n = normalize_series(pairs_df["pair_esg"])
+    div_n = normalize_series(pairs_df["diversification"])
+    risk_n = normalize_series(pairs_df["risk_opt"])
+    low_risk_n = 1 - risk_n
+
+    gamma_scaled = (gamma - 0.5) / 9.5
+    gamma_scaled = min(max(gamma_scaled, 0), 1)
+
+    if esg_focus == "Pure Financials Focus":
+        pairs_df["final_score"] = (
+            0.38 * utility_n +
+            0.32 * sharpe_n +
+            0.15 * div_n +
+            (0.15 * gamma_scaled) * low_risk_n
+        )
+    elif esg_focus == "Balanced ESG":
+        pairs_df["final_score"] = (
+            0.28 * utility_n +
+            0.22 * sharpe_n +
+            0.30 * esg_n +
+            0.10 * div_n +
+            (0.10 * gamma_scaled) * low_risk_n
+        )
+    else:
+        pairs_df["final_score"] = (
+            0.22 * utility_n +
+            0.18 * sharpe_n +
+            0.40 * esg_n +
+            0.10 * div_n +
+            (0.10 * gamma_scaled) * low_risk_n
+        )
+
+    best_idx = pairs_df["final_score"].idxmax()
+    best_row = pairs_df.loc[best_idx]
+
+    return (
+        best_row["ticker1"],
+        best_row["ticker2"],
+        best_row["stats"],
+        best_row["result"]
+    )
 
 def render_back_button():
     left, right = st.columns([1.2, 6])
@@ -638,54 +808,160 @@ def render_outputs(
         )
 
     with tab2:
-        st.markdown("### Portfolio Visualization")
+        st.markdown("### Risk-Return Frontier")
 
-        # Generate efficient frontier
-        weights_plot = np.linspace(0, 1, 200)
-        returns_frontier = [portfolio_ret(w, stats["r1"], stats["r2"]) for w in weights_plot]
-        sds_frontier = [portfolio_sd(w, stats["sd1"], stats["sd2"], stats["rho"]) for w in weights_plot]
+        weights_plot = np.linspace(0, 1, 400)
+        returns_frontier = np.array([portfolio_ret(w, stats["r1"], stats["r2"]) for w in weights_plot])
+        sds_frontier = np.array([portfolio_sd(w, stats["sd1"], stats["sd2"], stats["rho"]) for w in weights_plot])
 
-        # Create plot
-        fig, ax = plt.subplots(figsize=(10, 6))
+        order = np.argsort(sds_frontier)
+        sds_frontier = sds_frontier[order]
+        returns_frontier = returns_frontier[order]
 
-        # Efficient frontier
-        ax.plot(sds_frontier, returns_frontier, 'b-', linewidth=2, label='Efficient Frontier')
+        unique_sd, unique_idx = np.unique(np.round(sds_frontier, 8), return_index=True)
+        sds_frontier = sds_frontier[unique_idx]
+        returns_frontier = returns_frontier[unique_idx]
 
-        # Capital Market Line
-        sd_max = max(sds_frontier) * 1.2
-        sd_cml = np.linspace(0, sd_max, 100)
-        ret_cml = (
-            r_free + (ret_tangency - r_free) / sd_tangency * sd_cml
-            if sd_tangency > 0 else r_free * np.ones_like(sd_cml)
+        sd_max = max(
+            np.max(sds_frontier),
+            stats["sd1"],
+            stats["sd2"],
+            result["risk_opt"],
+            sd_tangency
+        ) * 1.18
+
+        sd_cml = np.linspace(0, sd_max, 200)
+        if sd_tangency > 0:
+            ret_cml = r_free + ((ret_tangency - r_free) / sd_tangency) * sd_cml
+        else:
+            ret_cml = np.ones_like(sd_cml) * r_free
+
+        x_min = 0
+        x_max = sd_max
+        y_candidates = [
+            np.min(returns_frontier),
+            stats["r1"],
+            stats["r2"],
+            result["ret_opt"],
+            ret_tangency,
+            r_free
+        ]
+        y_min = min(y_candidates) - 0.03
+        y_max = max(max(y_candidates), np.max(ret_cml)) + 0.03
+
+        fig, ax = plt.subplots(figsize=(10.4, 6.4), dpi=170)
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("#fbfdff")
+
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_color("#0f2d68")
+        ax.spines["bottom"].set_color("#0f2d68")
+        ax.spines["left"].set_linewidth(1.6)
+        ax.spines["bottom"].set_linewidth(1.6)
+
+        ax.grid(True, color="#c7d2e4", alpha=0.55, linewidth=0.8)
+
+        frontier_handle, = ax.plot(
+            sds_frontier,
+            returns_frontier,
+            color="#4e9f58",
+            linewidth=4.2,
+            solid_capstyle="round",
+            label="Efficient Frontier",
+            zorder=2
         )
-        ax.plot(sd_cml, ret_cml, 'g--', linewidth=2, label='Capital Market Line')
 
-        # Tangency portfolio
-        ax.scatter(sd_tangency, ret_tangency, color='red', s=200, zorder=5, marker='*', label='Tangency Portfolio')
+        cml_handle, = ax.plot(
+            sd_cml,
+            ret_cml,
+            linestyle="--",
+            color="#0b5cad",
+            linewidth=2.7,
+            label="Capital Market Line",
+            zorder=1
+        )
 
-        # Optimal portfolio
-        ax.scatter(result["risk_opt"], result["ret_opt"], color='orange', s=200, zorder=5, marker='D', label='Your Optimal Portfolio')
+        asset1_handle = ax.scatter(
+            stats["sd1"], stats["r1"],
+            s=230, color="#1f66c2", edgecolor="#184d93", linewidth=1.2,
+            label=name1, zorder=5
+        )
 
-        # Risk-free asset
-        ax.scatter(0, r_free, color='green', s=150, zorder=5, marker='s', label='Risk-Free Asset')
+        asset2_handle = ax.scatter(
+            stats["sd2"], stats["r2"],
+            s=230, color="#66a84f", edgecolor="#4c7e3b", linewidth=1.2,
+            label=name2, zorder=5
+        )
 
-        # Individual assets
-        ax.scatter(stats["sd1"], stats["r1"], color='blue', s=120, zorder=5, marker='o', label=name1)
-        ax.scatter(stats["sd2"], stats["r2"], color='purple', s=120, zorder=5, marker='o', label=name2)
+        tangency_handle = ax.scatter(
+            sd_tangency, ret_tangency,
+            s=520, color="#2f8f3a", edgecolor="#246d2d", linewidth=1.0,
+            marker="*", label="Tangency Portfolio", zorder=6
+        )
 
-        ax.set_xlabel('Risk (Standard Deviation)')
-        ax.set_ylabel('Expected Return')
-        ax.set_title('Portfolio Optimization')
+        optimal_handle = ax.scatter(
+            result["risk_opt"], result["ret_opt"],
+            s=230, color="#ffb84d", edgecolor="#d08c24", linewidth=1.2,
+            marker="D", label="Your Optimal Portfolio", zorder=7
+        )
+
+        rf_handle = ax.scatter(
+            0, r_free,
+            s=170, color="#6bb8ff", edgecolor="#3d8ed8", linewidth=1.1,
+            marker="s", label="Risk-Free Asset", zorder=6
+        )
+
+        ax.set_title("Risk-Return Frontier", fontsize=24, color="#0f2d68", fontweight="bold", pad=16)
+        ax.set_xlabel("Risk (Standard Deviation)", fontsize=17, color="#0f2d68", labelpad=12)
+        ax.set_ylabel("Expected Return", fontsize=17, color="#0f2d68", labelpad=14)
+
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
+
         ax.xaxis.set_major_formatter(mtick.PercentFormatter(1.0, decimals=1))
         ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0, decimals=1))
-        ax.legend()
-        ax.grid(True, alpha=0.3)
+        ax.tick_params(axis="both", labelsize=13, colors="#0f2d68", width=1.2, length=5)
 
-        st.pyplot(fig)
+        legend = ax.legend(
+            handles=[
+                asset1_handle, asset2_handle, optimal_handle,
+                tangency_handle, rf_handle, frontier_handle, cml_handle
+            ],
+            labels=[
+                name1, name2, "Your Optimal Portfolio",
+                "Tangency Portfolio", "Risk-Free Asset",
+                "Efficient Frontier", "Capital Market Line"
+            ],
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1.0),
+            borderaxespad=0.0,
+            frameon=True,
+            facecolor="white",
+            edgecolor="#b9c8df",
+            fontsize=9,
+            borderpad=0.6,
+            labelspacing=0.45,
+            handlelength=1.8,
+            handletextpad=0.5,
+            markerscale=0.9
+        )
+
+        for text in legend.get_texts():
+            txt = text.get_text()
+            if txt == "Efficient Frontier":
+                text.set_color("#4e9f58")
+            elif txt == "Capital Market Line":
+                text.set_color("#0b5cad")
+            else:
+                text.set_color("#0f2d68")
+
+        plt.tight_layout()
+        st.pyplot(fig, use_container_width=True)
 
         st.write(
-            "The chart shows the two-asset portfolio frontier, the Capital Market Line, the tangency portfolio, "
-            "your utility-maximizing portfolio, and the risk-free asset."
+            "The chart shows the two-asset efficient frontier, the Capital Market Line, the tangency portfolio, "
+            "your utility-maximizing portfolio, and the risk-free asset, all styled to match the rest of the app."
         )
 
         st.markdown("### ESG Weight Composition of Each Stock")
@@ -865,16 +1141,16 @@ if st.session_state.page == "home":
     with st.expander("🤖 Recommendation Engine – fully automated"):
         st.write("""
         - We analyse all S&P500 stocks using your selected ESG focus.
-        - A scoring function selects the 10 most promising stocks.
-        - Every pair is evaluated, and the pair that gives you the highest utility is recommended.
-        - You only set your preferences – the app does the rest.
+        - A scoring function selects the best candidates using ESG fit, excess return, risk, and Sharpe-like attractiveness.
+        - Candidate pairs are evaluated and the pair with the strongest final recommendation score is selected.
+        - Your ESG choice, risk aversion, and risk-free rate now have a much stronger influence on the final result.
         """)
 
     with st.expander("📊 S&P500 Stocks Comparison – pick any two"):
         st.write("""
         - Choose any two S&P500 stocks by name or ticker.
         - The app fetches returns, volatilities, correlation, and ESG scores.
-        - It then draws the efficient frontier and finds the optimal blend for your utility.
+        - It then draws the efficient frontier, Capital Market Line, and finds the optimal blend for your utility.
         """)
 
     with st.expander("🛠️ Advanced Custom Generator – full control"):
@@ -911,45 +1187,8 @@ elif st.session_state.page == "recommendation":
     esg_pref, lambda_esg = add_preference_scores(esg, esg_focus)
     asset_summary = get_single_asset_summary_all(prices)
 
-    universe = esg_pref.merge(asset_summary, on="ticker", how="inner")
-    universe = universe[universe["expected_return"] <= 0.25].copy()
-
-    if esg_focus == "Pure Financials Focus":
-        universe["selection_score"] = (
-            0.80 * universe["expected_return"] -
-            0.20 * universe["risk"]
-        )
-    else:
-        universe["selection_score"] = (
-            0.70 * (universe["preference_score"] / 10) +
-            0.20 * universe["expected_return"] -
-            0.10 * universe["risk"]
-        )
-
-    shortlist = universe.sort_values("selection_score", ascending=False).head(10).copy()
-
-    best_pair = None
-    best_pair_score = -np.inf
-
-    for t1, t2 in combinations(shortlist["ticker"], 2):
-        stats = get_asset_stats(prices, t1, t2)
-        if stats is None:
-            continue
-
-        esg1 = float(esg_pref.loc[esg_pref["ticker"] == t1, "preference_score"].iloc[0])
-        esg2 = float(esg_pref.loc[esg_pref["ticker"] == t2, "preference_score"].iloc[0])
-
-        result = optimize_two_asset_portfolio(
-            stats["r1"], stats["r2"],
-            stats["sd1"], stats["sd2"],
-            stats["rho"],
-            esg1, esg2,
-            gamma, lambda_esg
-        )
-
-        if result["utility_opt"] > best_pair_score:
-            best_pair_score = result["utility_opt"]
-            best_pair = (t1, t2, stats, result)
+    candidates = build_recommendation_candidates(esg_pref, asset_summary, r_free, gamma, esg_focus)
+    best_pair = choose_recommended_pair(prices, esg_pref, candidates, gamma, lambda_esg, r_free, esg_focus)
 
     if best_pair is None:
         st.error("No valid stock pair could be formed under the current recommendation constraints.")
@@ -1102,16 +1341,16 @@ elif st.session_state.page == "custom":
         if esg_focus == "Balanced ESG":
             return (env + soc + gov) / 3
         elif esg_focus == "Environmental":
-            return 0.7 * env + 0.15 * soc + 0.15 * gov
+            return 0.75 * env + 0.125 * soc + 0.125 * gov
         elif esg_focus == "Social":
-            return 0.15 * env + 0.7 * soc + 0.15 * gov
+            return 0.125 * env + 0.75 * soc + 0.125 * gov
         elif esg_focus == "Governance":
-            return 0.15 * env + 0.15 * soc + 0.7 * gov
+            return 0.125 * env + 0.125 * soc + 0.75 * gov
         else:
             return (env + soc + gov) / 3
 
-    esg1 = custom_pref_score(env1, soc1, gov1, esg_focus)
-    esg2 = custom_pref_score(env2, soc2, gov2, esg_focus)
+    esg1 = custom_pref_score(env1, soc1, gov1, esg_focus) * 10
+    esg2 = custom_pref_score(env2, soc2, gov2, esg_focus) * 10
 
     result = optimize_two_asset_portfolio(
         r1, r2, sd1, sd2, rho, esg1, esg2, gamma, lambda_esg
